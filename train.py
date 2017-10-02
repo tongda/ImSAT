@@ -6,7 +6,7 @@ import tensorflow as tf
 from tensorflow.contrib.data import Dataset
 from tensorflow.python.ops.lookup_ops import HashTable, KeyValueTensorInitializer
 
-from imsat.model import AttendTell
+from imsat.model import AttendTell, create_loss
 from imsat.vggnet import Vgg19
 
 
@@ -41,6 +41,8 @@ def main():
 
   index_dataset = caption_dataset.map(split_sentence)
 
+  caption_length_dataset = index_dataset.map(lambda t: tf.size(t))
+
   def decode_image(filename):
     image = tf.image.decode_jpeg(tf.read_file(filename))
     image = tf.image.resize_images(image, [224, 224])
@@ -49,21 +51,28 @@ def main():
 
   image_dataset = filename_dataset.map(decode_image)
 
-  iterator = Dataset.zip((image_dataset, caption_dataset, index_dataset)).padded_batch(2, ((224, 224, 3), (), (None,))).make_initializable_iterator()
-  image_tensor, caption_tensor, index_tensor = iterator.get_next()
+  iterator = Dataset.zip((image_dataset, caption_dataset, index_dataset, caption_length_dataset)).padded_batch(2, ((224, 224, 3), (), (None,), ())).make_initializable_iterator()
+  image_tensor, caption_tensor, index_tensor, length_tensor = iterator.get_next()
   vgg_model_path = "/Users/dtong/code/ai/ImSAT/data/imagenet-vgg-verydeep-19.mat"
   vggnet = Vgg19(vgg_model_path)
   vggnet.build(image_tensor)
-
   model = AttendTell(word_to_idx=word_to_idx)
   outputs = model.build(features=vggnet.features, captions=index_tensor)
+  loss_op = create_loss(outputs, index_tensor, length_tensor)
+
+  optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
+  trainables = tf.trainable_variables()
+  grads = optimizer.compute_gradients(loss_op, trainables)
+  global_step = tf.contrib.framework.get_global_step()
+  train_op = optimizer.apply_gradients(grads, global_step=global_step)
 
   sess = tf.Session()
   sess.run(tf.global_variables_initializer())
   sess.run(table.init)
   sess.run(iterator.initializer)
-  for i in range(10):
-    print(sess.run([outputs]))
+  for i in range(30):
+    loss, _ = sess.run([loss_op, train_op])
+    print(loss)
 
     # batch_size = 4
     #
