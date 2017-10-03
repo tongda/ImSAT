@@ -87,8 +87,8 @@ def experiment_fn(run_config, hparams):
     captions, filenames = list(zip(*cap_fn_pairs))
 
     def input_fn():
-      caption_dataset: Dataset = Dataset.from_tensor_slices(list(captions))
-      filename_dataset: Dataset = Dataset.from_tensor_slices(list(filenames))
+      caption_dataset = Dataset.from_tensor_slices(list(captions))
+      filename_dataset = Dataset.from_tensor_slices(list(filenames))
 
       table = HashTable(KeyValueTensorInitializer(list(word_to_idx.keys()), list(word_to_idx.values()),
                                                   key_dtype=tf.string, value_dtype=tf.int32),
@@ -170,6 +170,7 @@ def main():
 
   run_config = RunConfig()
   run_config = run_config.replace(model_dir=get_model_dir(parsed_args))
+  run_config = run_config.replace(log_device_placement=True)
 
   params = HParams(
     learning_rate=parsed_args.lr,
@@ -201,8 +202,8 @@ def old_main():
 
   captions, filenames = list(zip(*cap_fn_pairs))
 
-  caption_dataset: Dataset = Dataset.from_tensor_slices(list(captions))
-  filename_dataset: Dataset = Dataset.from_tensor_slices(list(filenames))
+  caption_dataset = Dataset.from_tensor_slices(list(captions))
+  filename_dataset = Dataset.from_tensor_slices(list(filenames))
 
   with open(os.path.join("data", 'word_to_idx.pkl'), 'rb') as f:
     word_to_idx = pickle.load(f)
