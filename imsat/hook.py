@@ -1,3 +1,5 @@
+import tensorflow as tf
+
 from tensorflow.python.training.session_run_hook import SessionRunHook
 
 
