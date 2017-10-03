@@ -71,7 +71,7 @@ def _batch_norm(x, mode='train', name=None):
 
 class AttendTell:
   def __init__(self,
-               word_to_idx,
+               vocab_size,
                dim_feature=(196, 512),
                dim_embed=512,
                dim_hidden=1024,
@@ -85,7 +85,7 @@ class AttendTell:
     self.alpha_c = alpha_c
     self.selector = selector
     self.dropout = dropout
-    self.vocab_size = len(word_to_idx)
+    self.vocab_size = vocab_size
     self.position_num = dim_feature[0]
     self.feature_length = dim_feature[1]
     self.embedding_size = dim_embed
