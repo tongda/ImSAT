@@ -94,7 +94,6 @@ def experiment_fn(run_config, hparams):
       table = HashTable(KeyValueTensorInitializer(list(word_to_idx.keys()), list(word_to_idx.values()),
                                                   key_dtype=tf.string, value_dtype=tf.int32),
                         0)
-      tf.add_to_collection("initializer", table.init)
 
       def split_sentence(sentence):
         words = tf.string_split(tf.reshape(sentence, (1,))).values
