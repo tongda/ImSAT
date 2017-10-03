@@ -215,8 +215,8 @@ class AttendTell:
                           biases_initializer=self.const_initializer)
       return c, h
 
-  def _word_embedding(self, inputs, reuse=False):
-    with tf.variable_scope('word_embedding', reuse=reuse):
+  def _word_embedding(self, inputs):
+    with tf.variable_scope('word_embedding'), tf.device("/cpu:0"):
       w = tf.get_variable('w',
                           [self.vocab_size, self.embedding_size],
                           initializer=self.emb_initializer)

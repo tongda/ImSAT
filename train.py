@@ -88,31 +88,35 @@ def experiment_fn(run_config, hparams):
     captions, filenames = list(zip(*cap_fn_pairs))
 
     def input_fn():
-      caption_dataset = Dataset.from_tensor_slices(list(captions))
-      filename_dataset = Dataset.from_tensor_slices(list(filenames))
+      with tf.variable_scope("input_fn"), tf.device("/cpu:0"):
+        caption_dataset = Dataset.from_tensor_slices(list(captions))
+        filename_dataset = Dataset.from_tensor_slices(list(filenames))
 
-      table = HashTable(KeyValueTensorInitializer(list(word_to_idx.keys()), list(word_to_idx.values()),
-                                                  key_dtype=tf.string, value_dtype=tf.int32),
-                        0)
+        table_init = KeyValueTensorInitializer(list(word_to_idx.keys()),
+                                               list(word_to_idx.values()),
+                                               key_dtype=tf.string,
+                                               value_dtype=tf.int32)
+        table = HashTable(table_init, default_value=0)
 
-      def split_sentence(sentence):
-        words = tf.string_split(tf.reshape(sentence, (1,))).values
-        words = tf.concat([tf.constant(["<START>"]), words, tf.constant(["<END>"])], axis=0)
-        return table.lookup(words)
+        def split_sentence(sentence):
+          words = tf.string_split(tf.reshape(sentence, (1,))).values
+          words = tf.concat([tf.constant(["<START>"]), words, tf.constant(["<END>"])],
+                            axis=0)
+          return table.lookup(words)
 
-      index_dataset = caption_dataset.map(split_sentence)
+        index_dataset = caption_dataset.map(split_sentence)
 
-      def decode_image(filename):
-        image = tf.image.decode_jpeg(tf.read_file(filename))
-        image = tf.image.resize_images(image, [224, 224])
-        image = tf.to_float(image)
-        return image
+        def decode_image(filename):
+          image = tf.image.decode_jpeg(tf.read_file(filename))
+          image = tf.image.resize_images(image, [224, 224])
+          image = tf.to_float(image)
+          return image
 
-      image_dataset = filename_dataset.map(decode_image)
-      caption_structure = {
-        "raw": caption_dataset,
-        "index": index_dataset
-      }
+        image_dataset = filename_dataset.map(decode_image)
+        caption_structure = {
+          "raw": caption_dataset,
+          "index": index_dataset
+        }
       return image_dataset, caption_structure
 
     return input_fn
