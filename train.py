@@ -12,6 +12,7 @@ from tensorflow.contrib.training import HParams
 from tensorflow.python.estimator.model_fn import EstimatorSpec
 from tensorflow.python.ops.lookup_ops import HashTable, KeyValueTensorInitializer
 
+from imsat.hook import IteratorInitializerHook
 from imsat.model import AttendTell, create_loss
 from imsat.vggnet import Vgg19
 
@@ -122,6 +123,8 @@ def experiment_fn(run_config, hparams):
     params=hparams,
     config=run_config)
 
+  initializer_hook = IteratorInitializerHook()
+
   experiment = Experiment(
     estimator=estimator,
     train_input_fn=get_input_fn("train"),
@@ -129,7 +132,9 @@ def experiment_fn(run_config, hparams):
     train_steps=hparams.train_steps,
     eval_steps=500,
     train_steps_per_iteration=hparams.steps_per_eval,
+    eval_hooks=[initializer_hook],
   )
+  experiment.extend_train_hooks([initializer_hook])
   return experiment
 
 
