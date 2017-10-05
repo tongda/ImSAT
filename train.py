@@ -190,7 +190,10 @@ def main():
 
   parsed_args = get_parser().parse_args()
 
-  run_config = RunConfig(log_device_placement=True)
+  session_config = tf.ConfigProto(allow_soft_placement=True,
+                                  log_device_placement=True)
+  run_config = RunConfig(log_device_placement=True,
+                         session_config=session_config)
   run_config = run_config.replace(model_dir=get_model_dir(parsed_args))
 
   params = HParams(
