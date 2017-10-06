@@ -2,6 +2,7 @@ import argparse
 
 import os
 import pickle
+import json
 
 from tensorflow.contrib.learn import RunConfig
 from tensorflow.contrib.training import HParams
@@ -36,14 +37,23 @@ def main():
   input_fn = get_input_fn(word_to_idx, "val")
   val_init_hook = IteratorInitializerHook("infer")
 
-  all_predicions = []
-  pred_results = estimator.predict(input_fn, hooks=[val_init_hook])
   idx_to_word = {v: k for k, v in word_to_idx.items()}
+  del word_to_idx
+
+  pred_results = estimator.predict(input_fn, hooks=[val_init_hook])
+  all_predicions = []
   for pred in pred_results:
-    result = ' '.join([idx_to_word[idx] for idx in pred if idx != 0])
+    result = ' '.join([idx_to_word[idx] for idx in pred if idx != 0 and idx != 2])
     all_predicions.append(result)
 
-  print(all_predicions)
+  with open("data/annotations/captions_val2014.json") as f:
+    annotations = json.load(f)
+  image_ids = [ann['image_id'] for ann in annotations['annotations']]
+  total_results = [{"image_id": img_id, "caption": pred}
+                   for img_id, pred
+                   in zip(image_ids, all_predicions)]
+  with open("result.json", "w") as f:
+    json.dump(total_results, f)
 
 
 if __name__ == '__main__':
