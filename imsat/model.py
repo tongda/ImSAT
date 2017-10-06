@@ -169,6 +169,78 @@ class AttendTell:
     outputs = tf.transpose(outputs.stack(), (1, 0, 2))
     return outputs
 
+  def build_prediction(self, features):
+    features = _batch_norm(features, mode='train', name='conv_features')
+    c, h = self._get_initial_lstm(features=features)
+    # (batch, position_num, feature_size)
+    features_proj = self._project_features(features=features)
+
+    # TODO: Try other structures
+    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.hidden_size)
+
+    def condition(time, all_outputs: tf.TensorArray, inputs, states):
+      def has_end_word(t):
+        return tf.reduce_any(tf.equal(t, END_WORD_INDEX))
+
+      def check_all_ends():
+        word_indexes = tf.argmax(all_outputs.stack(), axis=2)
+        word_indexes = tf.transpose(word_indexes, [1, 0])
+        end_word_flags = tf.map_fn(has_end_word, word_indexes, dtype=tf.bool)
+        check_res = tf.reduce_all(end_word_flags)
+        return check_res
+
+      all_outputs_size = all_outputs.size()
+      is_first_frame = tf.equal(all_outputs_size, 0)
+      gen_ends = tf.cond(is_first_frame,
+                         lambda: tf.constant(False, tf.bool),
+                         check_all_ends)
+      cond_res = tf.logical_and(tf.logical_not(gen_ends),
+                                tf.less(time, CAPTION_MAX_LENGTH))
+      return cond_res
+
+    # inputs shape: (batch, embedding)
+    # output shape: (batch, hidden_size)
+    # hidden layer shape: (embedding, hidden_size)
+    # h: (batch, hidden_size)
+    def body(time, all_outputs: tf.TensorArray, inputs, state: LSTMStateTuple):
+      # todo: attention layer missing here
+
+      # context: (batch, feature_size)
+      # alpha: (batch, position_num)
+      context, alpha = self._attention_layer(features, features_proj, state.h)
+
+      # todo: alpha regularization
+      # todo: selector
+
+      # decoder_input: (batch, embedding_size + feature_size)
+      decoder_input = tf.concat(values=[inputs, context], axis=1)
+      output, nxt_state = lstm_cell(decoder_input, state=state)
+      # todo: more complex decode lstm output
+      logits = fully_connected(inputs=output,
+                               num_outputs=self.vocab_size,
+                               activation_fn=None)
+      all_outputs = all_outputs.write(time, logits)
+      next_inputs = self._word_embedding(tf.argmax(logits, axis=-1), reuse=True)
+      return time + 1, all_outputs, next_inputs, nxt_state
+
+    out_ta = tensor_array_ops.TensorArray(tf.float32,
+                                          size=0,
+                                          dynamic_size=True,
+                                          clear_after_read=False,
+                                          element_shape=(None, self.vocab_size))
+    init_state = LSTMStateTuple(c, h)
+
+    zero_inputs = tf.fill(tf.expand_dims(tf.shape(features)[0], 0), START_WORD_INDEX)
+    zero_inputs = self._word_embedding(zero_inputs)
+
+    _, outputs, _, _ = control_flow_ops.while_loop(
+      condition,
+      body,
+      loop_vars=[0, out_ta, zero_inputs, init_state]
+    )
+    outputs = tf.transpose(outputs.stack(), (1, 0, 2))
+    return outputs
+
   def _attention_layer(self, features, features_proj, h):
     with tf.variable_scope('attention_layer'):
       state_proj = fully_connected(inputs=h,
@@ -215,8 +287,8 @@ class AttendTell:
                           biases_initializer=self.const_initializer)
       return c, h
 
-  def _word_embedding(self, inputs):
-    with tf.variable_scope('word_embedding'), tf.device("/cpu:0"):
+  def _word_embedding(self, inputs, reuse=False):
+    with tf.variable_scope('word_embedding', reuse=reuse), tf.device("/cpu:0"):
       w = tf.get_variable('w',
                           [self.vocab_size, self.embedding_size],
                           initializer=self.emb_initializer)
@@ -225,6 +297,7 @@ class AttendTell:
 
   # todo: I think this function has some issue. what is this function
   #   used for ?
+
   def _project_features(self, features):
     with tf.variable_scope('project_features'):
       features_flat = tf.reshape(features, [-1, self.feature_length])

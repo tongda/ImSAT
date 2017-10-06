@@ -20,30 +20,38 @@ from imsat.model import AttendTell, create_loss
 
 
 def model_fn(features, labels, mode, params, config):
-  cap_lens = labels["index"].map(lambda t: tf.size(t))
-  datasets = (features, labels["raw"], labels["index"], cap_lens)
-  pad_size = ((224, 224, 3), (), (None,), ())
-  batches = Dataset.zip(datasets) \
-    .shuffle(buffer_size=10 * params.batch_size) \
-    .padded_batch(params.batch_size, pad_size)
-
   image_tensor = caption_tensor = cap_idx_tensor = cap_len_tensor = None
   scaffold = None
-  if mode == ModeKeys.TRAIN:
-    train_iterator = batches \
-      .repeat() \
-      .make_initializable_iterator()
-    image_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
-      train_iterator.get_next()
-    tf.add_to_collection("train_initializer", train_iterator.initializer)
 
-  if mode == ModeKeys.EVAL:
-    val_iterator = batches \
-      .make_initializable_iterator()
-    image_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
-      val_iterator.get_next()
-    tf.add_to_collection("val_initializer", val_iterator.initializer)
-    scaffold = tf.train.Scaffold(init_op=val_iterator.initializer)
+  if mode == ModeKeys.TRAIN or mode == ModeKeys.EVAL:
+    cap_lens = labels["index"].map(lambda t: tf.size(t))
+    datasets = (features, labels["raw"], labels["index"], cap_lens)
+    pad_size = ((224, 224, 3), (), (None,), ())
+    batches = Dataset.zip(datasets) \
+      .shuffle(buffer_size=10 * params.batch_size) \
+      .padded_batch(params.batch_size, pad_size)
+
+    if mode == ModeKeys.TRAIN:
+      train_iterator = batches \
+        .repeat() \
+        .make_initializable_iterator()
+      image_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
+        train_iterator.get_next()
+      tf.add_to_collection("train_initializer", train_iterator.initializer)
+
+    if mode == ModeKeys.EVAL:
+      val_iterator = batches \
+        .make_initializable_iterator()
+      image_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
+        val_iterator.get_next()
+      tf.add_to_collection("val_initializer", val_iterator.initializer)
+      scaffold = tf.train.Scaffold(init_op=val_iterator.initializer)
+
+  if mode == ModeKeys.INFER:
+    batches = features.batch(params.batch_size)
+    infer_iterator = batches.make_initializable_iterator()
+    image_tensor = infer_iterator.get_next()
+    tf.add_to_collection("infer_initializer", infer_iterator.initializer)
 
   _, end_points = vgg.vgg_16(image_tensor)
   image_features = end_points['vgg_16/conv5/conv5_3']
@@ -55,15 +63,17 @@ def model_fn(features, labels, mode, params, config):
     # signature of sc
     scaffold = tf.train.Scaffold(init_fn=lambda _, sess: init_fn(sess))
 
-  model = AttendTell(vocab_size=params.vocab_size)
-  outputs = model.build(image_features, cap_idx_tensor)
-  predictions = tf.argmax(outputs, axis=-1)
   loss_op = None
   train_op = None
-
+  predictions = None
+  model = AttendTell(vocab_size=params.vocab_size)
   if mode != ModeKeys.INFER:
+    outputs = model.build(image_features, cap_idx_tensor)
     loss_op = create_loss(outputs, cap_idx_tensor, cap_len_tensor)
     train_op = _get_train_op(loss_op, params.learning_rate)
+  else:
+    outputs = model.build_prediction(image_features)
+    predictions = tf.argmax(outputs, axis=-1)
 
   return EstimatorSpec(
     mode=mode,
@@ -84,55 +94,56 @@ def _get_train_op(loss_op, lr):
   return train_op
 
 
+def get_input_fn(word_to_idx, mode):
+  with open("data/annotations/captions_%s2014.json" % mode) as f:
+    annotations = json.load(f)
+  id_to_filename = {img['id']: img['file_name'] for img in annotations['images']}
+  # todo: to achieve totally end-to-end training, we should
+  #   call `lower` in tensor-style. But TF do not support
+  #   `string_lower` directly right now.
+  cap_fn_pairs = [(process_caption(ann['caption']), os.path.join("image/%s" % mode, id_to_filename[ann['image_id']]))
+                  for ann in annotations['annotations']]
+  captions, filenames = list(zip(*cap_fn_pairs))
+
+  def input_fn():
+    with tf.variable_scope("input_fn"), tf.device("/cpu:0"):
+      caption_dataset = Dataset.from_tensor_slices(list(captions))
+      filename_dataset = Dataset.from_tensor_slices(list(filenames))
+
+      table_init = KeyValueTensorInitializer(list(word_to_idx.keys()),
+                                             list(word_to_idx.values()),
+                                             key_dtype=tf.string,
+                                             value_dtype=tf.int32)
+      table = HashTable(table_init, default_value=0)
+
+      def split_sentence(sentence):
+        words = tf.string_split(tf.reshape(sentence, (1,))).values
+        words = tf.concat([tf.constant(["<START>"]), words, tf.constant(["<END>"])],
+                          axis=0)
+        return table.lookup(words)
+
+      index_dataset = caption_dataset.map(split_sentence)
+
+      def decode_image(filename):
+        image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
+        image = tf.image.resize_images(image, [224, 224])
+        image = tf.to_float(image)
+        return image
+
+      image_dataset = filename_dataset.map(decode_image)
+      caption_structure = {
+        "raw": caption_dataset,
+        "index": index_dataset
+      }
+    return image_dataset, caption_structure
+
+  return input_fn
+
+
 def experiment_fn(run_config, hparams):
   with open(os.path.join("data", 'word_to_idx.pkl'), 'rb') as f:
     word_to_idx = pickle.load(f)
   hparams.add_hparam("vocab_size", len(word_to_idx))
-
-  def get_input_fn(mode):
-    with open("data/annotations/captions_%s2014.json" % mode) as f:
-      annotations = json.load(f)
-    id_to_filename = {img['id']: img['file_name'] for img in annotations['images']}
-    # todo: to achieve totally end-to-end training, we should
-    #   call `lower` in tensor-style. But TF do not support
-    #   `string_lower` directly right now.
-    cap_fn_pairs = [(process_caption(ann['caption']), os.path.join("image/%s" % mode, id_to_filename[ann['image_id']]))
-                    for ann in annotations['annotations']]
-    captions, filenames = list(zip(*cap_fn_pairs))
-
-    def input_fn():
-      with tf.variable_scope("input_fn"), tf.device("/cpu:0"):
-        caption_dataset = Dataset.from_tensor_slices(list(captions))
-        filename_dataset = Dataset.from_tensor_slices(list(filenames))
-
-        table_init = KeyValueTensorInitializer(list(word_to_idx.keys()),
-                                               list(word_to_idx.values()),
-                                               key_dtype=tf.string,
-                                               value_dtype=tf.int32)
-        table = HashTable(table_init, default_value=0)
-
-        def split_sentence(sentence):
-          words = tf.string_split(tf.reshape(sentence, (1,))).values
-          words = tf.concat([tf.constant(["<START>"]), words, tf.constant(["<END>"])],
-                            axis=0)
-          return table.lookup(words)
-
-        index_dataset = caption_dataset.map(split_sentence)
-
-        def decode_image(filename):
-          image = tf.image.decode_jpeg(tf.read_file(filename))
-          image = tf.image.resize_images(image, [224, 224])
-          image = tf.to_float(image)
-          return image
-
-        image_dataset = filename_dataset.map(decode_image)
-        caption_structure = {
-          "raw": caption_dataset,
-          "index": index_dataset
-        }
-      return image_dataset, caption_structure
-
-    return input_fn
 
   estimator = Estimator(
     model_fn=model_fn,
@@ -144,8 +155,8 @@ def experiment_fn(run_config, hparams):
 
   experiment = Experiment(
     estimator=estimator,
-    train_input_fn=get_input_fn("train"),
-    eval_input_fn=get_input_fn("val"),
+    train_input_fn=get_input_fn(word_to_idx, "train"),
+    eval_input_fn=get_input_fn(word_to_idx, "val"),
     train_steps=hparams.train_steps,
     eval_steps=500,
     train_steps_per_iteration=hparams.steps_per_eval,
@@ -156,7 +167,7 @@ def experiment_fn(run_config, hparams):
 
 
 def get_parser():
-  parser = argparse.ArgumentParser(description="Windbag trainer.")
+  parser = argparse.ArgumentParser(description="ImSAT trainer.")
   parser.add_argument("--train-steps", dest="train_steps", type=int, default=10,
                       help="Number of steps.")
   parser.add_argument("--learning-rate", dest="lr", type=float, default=0.001,
@@ -207,7 +218,7 @@ def main():
   learn_runner.run(
     experiment_fn=experiment_fn,
     run_config=run_config,
-    schedule="train",
+    schedule="continuous_train_and_eval",
     hparams=params
   )
 
