@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.contrib.layers import fully_connected
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import tensor_array_ops
-from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple
+from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple, RNNCell
 
 START_WORD_INDEX = 1
 END_WORD_INDEX = 2
@@ -131,7 +131,7 @@ class AttendTell:
                                                          maxval=1.0)
 
   def _get_body_fn(self,
-                   rnn_cell,
+                   rnn_cell: RNNCell,
                    features,
                    dropout=False,
                    use_generated_inputs=False):
@@ -164,19 +164,19 @@ class AttendTell:
         context, alpha = self._attention_layer(features, state.h)
 
         # todo: alpha regularization
-        # todo: selector
+
+        with tf.variable_scope("selector"):
+          beta = fully_connected(state.h,
+                                 num_outputs=1,
+                                 activation_fn=tf.nn.sigmoid,
+                                 weights_initializer=self.weight_initializer,
+                                 biases_initializer=self.const_initializer)
+          context = tf.multiply(beta, context, name="selected_context")
 
         # decoder_input: (batch, embedding_size + feature_size)
-        decoder_input = tf.concat(values=[inputs, context], axis=1)
+        decoder_input = tf.concat(values=[inputs, context], axis=1, name="decoder_input")
         output, nxt_state = rnn_cell(decoder_input, state=state)
-        # todo: more complex decode lstm output
-        with tf.variable_scope("decode_rnn_output"):
-          if dropout:
-            output = tf.nn.dropout(output, keep_prob=self.keep_prob)
-
-          logits = fully_connected(inputs=output,
-                                   num_outputs=self.vocab_size,
-                                   activation_fn=None)
+        logits = self._decode_rnn_outputs(output, context, inputs, dropout=dropout)
         all_outputs = all_outputs.write(time, logits)
         if use_generated_inputs:
           next_inputs = self._word_embedding(tf.argmax(logits, axis=-1),
@@ -184,6 +184,33 @@ class AttendTell:
       return time + 1, all_outputs, next_inputs, nxt_state
 
     return body_fn
+
+  def _decode_rnn_outputs(self, output, features, previous, dropout=False):
+    with tf.variable_scope("decode_rnn_output"):
+      if dropout:
+        output = tf.nn.dropout(output, keep_prob=self.keep_prob)
+      hidden = fully_connected(inputs=output,
+                               num_outputs=self.embedding_size,
+                               activation_fn=None)
+
+      # ctx2out
+      context_hidden = fully_connected(features,
+                                       num_outputs=self.embedding_size,
+                                       activation_fn=None,
+                                       biases_initializer=None)
+      hidden += context_hidden
+
+      # prev2out
+      hidden += previous
+
+      hidden = tf.nn.tanh(hidden)
+
+      if dropout:
+        hidden = tf.nn.dropout(hidden, keep_prob=self.keep_prob)
+      logits = fully_connected(inputs=hidden,
+                               num_outputs=self.vocab_size,
+                               activation_fn=None)
+    return logits
 
   def _get_rnn_cell(self):
     return tf.nn.rnn_cell.BasicLSTMCell(num_units=self.hidden_size)
