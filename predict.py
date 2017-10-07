@@ -1,15 +1,16 @@
 import argparse
-
+import json
 import os
 import pickle
-import json
 
+import tensorflow as tf
+from tensorflow.contrib.data import Dataset
 from tensorflow.contrib.learn import RunConfig
 from tensorflow.contrib.training import HParams
 from tensorflow.python.estimator.estimator import Estimator
 
 from imsat.hook import IteratorInitializerHook
-from train import model_fn, get_input_fn
+from train import model_fn
 
 
 def get_parser():
@@ -20,6 +21,28 @@ def get_parser():
   parser.add_argument("--batch-size", dest="batch_size", type=int, default=2,
                       help="Batch size.")
   return parser
+
+
+def get_input_fn():
+  with open("data/annotations/captions_val2014.json") as f:
+    annotations = json.load(f)
+  id_to_filename = {img['id']: img['file_name'] for img in annotations['images']}
+  filenames = [os.path.join("image/val", fn) for fn in id_to_filename.values()]
+
+  def input_fn():
+    with tf.variable_scope("input_fn"), tf.device("/cpu:0"):
+      filename_dataset = Dataset.from_tensor_slices(list(filenames))
+
+      def decode_image(filename):
+        image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
+        image = tf.image.resize_images(image, [224, 224])
+        image = tf.to_float(image)
+        return image
+
+      image_dataset = filename_dataset.map(decode_image)
+    return image_dataset, None
+
+  return id_to_filename.keys(), input_fn
 
 
 def main():
@@ -34,7 +57,7 @@ def main():
     params=hparams,
     config=run_config)
 
-  input_fn = get_input_fn(word_to_idx, "val")
+  image_ids, input_fn = get_input_fn()
   val_init_hook = IteratorInitializerHook("infer")
 
   idx_to_word = {v: k for k, v in word_to_idx.items()}
@@ -46,9 +69,6 @@ def main():
     result = ' '.join([idx_to_word[idx] for idx in pred if idx != 0 and idx != 2])
     all_predicions.append(result)
 
-  with open("data/annotations/captions_val2014.json") as f:
-    annotations = json.load(f)
-  image_ids = [ann['image_id'] for ann in annotations['annotations']]
   total_results = [{"image_id": img_id, "caption": pred}
                    for img_id, pred
                    in zip(image_ids, all_predicions)]
