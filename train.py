@@ -68,11 +68,11 @@ def model_fn(features, labels, mode, params, config):
   predictions = None
   model = AttendTell(vocab_size=params.vocab_size)
   if mode != ModeKeys.INFER:
-    outputs = model.build(image_features, cap_idx_tensor)
+    outputs = model.build_train(image_features, cap_idx_tensor)
     loss_op = create_loss(outputs, cap_idx_tensor, cap_len_tensor)
     train_op = _get_train_op(loss_op, params.learning_rate)
   else:
-    outputs = model.build_prediction(image_features)
+    outputs = model.build_infer(image_features)
     predictions = tf.argmax(outputs, axis=-1)
 
   return EstimatorSpec(
@@ -201,10 +201,8 @@ def main():
 
   parsed_args = get_parser().parse_args()
 
-  session_config = tf.ConfigProto(allow_soft_placement=True,
-                                  log_device_placement=True)
-  run_config = RunConfig(log_device_placement=True,
-                         session_config=session_config)
+  session_config = tf.ConfigProto(allow_soft_placement=True)
+  run_config = RunConfig(session_config=session_config)
   run_config = run_config.replace(model_dir=get_model_dir(parsed_args))
 
   params = HParams(

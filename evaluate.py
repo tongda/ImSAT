@@ -1,13 +1,11 @@
-from pycocotools.coco import COCO
-from pycocoevalcap.eval import COCOEvalCap
-import matplotlib.pyplot as plt
-import skimage.io as io
+from json import encoder
+
 import pylab
 
-pylab.rcParams['figure.figsize'] = (10.0, 8.0)
+from pycocoevalcap.eval import COCOEvalCap
+from pycocotools.coco import COCO
 
-import json
-from json import encoder
+pylab.rcParams['figure.figsize'] = (10.0, 8.0)
 
 encoder.FLOAT_REPR = lambda o: format(o, '.3f')
 
