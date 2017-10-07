@@ -65,9 +65,13 @@ def main():
 
   pred_results = estimator.predict(input_fn, hooks=[val_init_hook])
   all_predicions = []
+  num_generated = 0
   for pred in pred_results:
     result = ' '.join([idx_to_word[idx] for idx in pred if idx != 0 and idx != 2])
     all_predicions.append(result)
+    num_generated = num_generated + 1
+    if num_generated % 1000 == 0:
+      print("Generated %d" % num_generated)
 
   total_results = [{"image_id": img_id, "caption": pred}
                    for img_id, pred
