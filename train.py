@@ -1,7 +1,5 @@
 import argparse
-import json
 import os
-import pickle
 
 import tensorflow as tf
 from tensorflow.contrib import slim
@@ -13,8 +11,8 @@ from tensorflow.contrib.slim.nets import vgg
 from tensorflow.contrib.training import HParams
 from tensorflow.python.estimator.estimator import Estimator
 from tensorflow.python.estimator.model_fn import EstimatorSpec
-from tensorflow.python.ops.lookup_ops import HashTable, KeyValueTensorInitializer
 
+from imsat.data import COCO, ChallengerAI
 from imsat.hook import IteratorInitializerHook
 from imsat.model import AttendTell, create_loss
 
@@ -98,56 +96,15 @@ def _get_train_op(loss_op, lr):
   return train_op
 
 
-def get_input_fn(word_to_idx, mode):
-  with open("data/annotations/captions_%s2014.json" % mode) as f:
-    annotations = json.load(f)
-  id_to_filename = {img['id']: img['file_name'] for img in annotations['images']}
-  # todo: to achieve totally end-to-end training, we should
-  #   call `lower` in tensor-style. But TF do not support
-  #   `string_lower` directly right now.
-  cap_fn_pairs = [(process_caption(ann['caption']), os.path.join("image/%s" % mode, id_to_filename[ann['image_id']]))
-                  for ann in annotations['annotations']]
-  captions, filenames = list(zip(*cap_fn_pairs))
-
-  def input_fn():
-    with tf.variable_scope("input_fn"), tf.device("/cpu:0"):
-      caption_dataset = Dataset.from_tensor_slices(list(captions))
-      filename_dataset = Dataset.from_tensor_slices(list(filenames))
-
-      table_init = KeyValueTensorInitializer(list(word_to_idx.keys()),
-                                             list(word_to_idx.values()),
-                                             key_dtype=tf.string,
-                                             value_dtype=tf.int32)
-      table = HashTable(table_init, default_value=0)
-
-      def split_sentence(sentence):
-        words = tf.string_split(tf.reshape(sentence, (1,))).values
-        words = tf.concat([tf.constant(["<START>"]), words, tf.constant(["<END>"])],
-                          axis=0)
-        return table.lookup(words)
-
-      index_dataset = caption_dataset.map(split_sentence)
-
-      def decode_image(filename):
-        image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
-        image = tf.image.resize_images(image, [224, 224])
-        image = tf.to_float(image)
-        return image
-
-      image_dataset = filename_dataset.map(decode_image)
-      caption_structure = {
-        "raw": caption_dataset,
-        "index": index_dataset
-      }
-    return image_dataset, caption_structure
-
-  return input_fn
-
-
 def experiment_fn(run_config, hparams):
-  with open(os.path.join("data", 'word_to_idx.pkl'), 'rb') as f:
-    word_to_idx = pickle.load(f)
-  hparams.add_hparam("vocab_size", len(word_to_idx))
+  if hparams.dataset == "COCO":
+    dataset = COCO("data/coco")
+  elif hparams.dataset == "challenger.ai":
+    dataset = ChallengerAI("data/challenger.ai")
+  else:
+    raise Exception("Unknown Dataset Name: '%s'." % hparams.dataset)
+
+  hparams.add_hparam("vocab_size", len(dataset.word_to_idx))
 
   estimator = Estimator(
     model_fn=model_fn,
@@ -159,8 +116,8 @@ def experiment_fn(run_config, hparams):
 
   experiment = Experiment(
     estimator=estimator,
-    train_input_fn=get_input_fn(word_to_idx, "train"),
-    eval_input_fn=get_input_fn(word_to_idx, "val"),
+    train_input_fn=dataset.get_input_fn("train"),
+    eval_input_fn=dataset.get_input_fn("val"),
     train_steps=hparams.train_steps,
     eval_steps=500,
     train_steps_per_iteration=hparams.steps_per_eval,
@@ -197,11 +154,14 @@ def get_parser():
                       help="Flag of whether to add context to output.")
   parser.add_argument("--prev2out", dest="prev2out", action="store_true",
                       help="Flag of whether to add previous state to output.")
+  parser.add_argument("--dataset", dest="dataset", type=str, default="COCO",
+                      help="Dataset name: COCO or challenger.ai")
   return parser
 
 
 def get_model_dir(parsed_args):
-  exp_name = ("selector_" + str(parsed_args.selector) +
+  exp_name = ("dataset_" + str(parsed_args.dataset) +
+              "-selector_" + str(parsed_args.selector) +
               "-dropout_" + str(parsed_args.dropout) +
               "-ctx2out_" + str(parsed_args.ctx2out) +
               "-prev2out_" + str(parsed_args.prev2out) +
@@ -228,7 +188,8 @@ def main():
     selector=parsed_args.selector,
     dropout=parsed_args.dropout,
     ctx2out=parsed_args.ctx2out,
-    prev2out=parsed_args.prev2out
+    prev2out=parsed_args.prev2out,
+    dataset=parsed_args.dataset
   )
 
   learn_runner.run(
@@ -237,13 +198,6 @@ def main():
     schedule="continuous_train_and_eval",
     hparams=params
   )
-
-
-def process_caption(caption):
-  caption = caption.replace('.', '').replace(',', '').replace("'", "").replace('"', '')
-  caption = caption.replace('&', 'and').replace('(', '').replace(")", "").replace('-', ' ')
-  caption = " ".join(caption.split())  # replace multiple spaces
-  return caption.lower()
 
 
 if __name__ == '__main__':
