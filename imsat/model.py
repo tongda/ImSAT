@@ -165,13 +165,14 @@ class AttendTell:
 
         # todo: alpha regularization
 
-        with tf.variable_scope("selector"):
-          beta = fully_connected(state.h,
-                                 num_outputs=1,
-                                 activation_fn=tf.nn.sigmoid,
-                                 weights_initializer=self.weight_initializer,
-                                 biases_initializer=self.const_initializer)
-          context = tf.multiply(beta, context, name="selected_context")
+        if self.selector:
+          with tf.variable_scope("selector"):
+            beta = fully_connected(state.h,
+                                   num_outputs=1,
+                                   activation_fn=tf.nn.sigmoid,
+                                   weights_initializer=self.weight_initializer,
+                                   biases_initializer=self.const_initializer)
+            context = tf.multiply(beta, context, name="selected_context")
 
         # decoder_input: (batch, embedding_size + feature_size)
         decoder_input = tf.concat(values=[inputs, context], axis=1, name="decoder_input")
@@ -193,15 +194,17 @@ class AttendTell:
                                num_outputs=self.embedding_size,
                                activation_fn=None)
 
-      # ctx2out
-      context_hidden = fully_connected(features,
-                                       num_outputs=self.embedding_size,
-                                       activation_fn=None,
-                                       biases_initializer=None)
-      hidden += context_hidden
+      if self.ctx2out:
+        # ctx2out
+        context_hidden = fully_connected(features,
+                                         num_outputs=self.embedding_size,
+                                         activation_fn=None,
+                                         biases_initializer=None)
+        hidden += context_hidden
 
-      # prev2out
-      hidden += previous
+      if self.prev2out:
+        # prev2out
+        hidden += previous
 
       hidden = tf.nn.tanh(hidden)
 
@@ -223,7 +226,7 @@ class AttendTell:
 
     lstm_cell = self._get_rnn_cell()
     cond_fn = _get_cond_fn(bucket_size)
-    body_fn = self._get_body_fn(lstm_cell, features, dropout=True)
+    body_fn = self._get_body_fn(lstm_cell, features, dropout=self.dropout)
     out_ta = self._get_init_outputs_array()
     embedded_captions = self._word_embedding(inputs=captions)
     init_state = self._get_init_state(features=features)

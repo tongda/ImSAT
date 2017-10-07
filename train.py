@@ -66,7 +66,11 @@ def model_fn(features, labels, mode, params, config):
   loss_op = None
   train_op = None
   predictions = None
-  model = AttendTell(vocab_size=params.vocab_size)
+  model = AttendTell(vocab_size=params.vocab_size,
+                     selector=params.selector,
+                     dropout=params.dropout,
+                     ctx2out=params.ctx2out,
+                     prev2out=params.prev2out)
   if mode != ModeKeys.INFER:
     outputs = model.build_train(image_features, cap_idx_tensor)
     loss_op = create_loss(outputs, cap_idx_tensor, cap_len_tensor)
@@ -185,12 +189,22 @@ def get_parser():
   parser.add_argument("--vgg-model-path", dest="vgg_model_path", type=str,
                       default="data/model/vgg_16.ckpt",
                       help="Path of pre-trained VGG parameters.")
+  parser.add_argument("--selector", dest="selector", action="store_true",
+                      help="Flag of whether to use selector for context.")
+  parser.add_argument("--dropout", dest="dropout", action="store_true",
+                      help="Flag of whether to use dropout.")
+  parser.add_argument("--ctx2out", dest="ctx2out", action="store_true",
+                      help="Flag of whether to add context to output.")
+  parser.add_argument("--prev2out", dest="prev2out", action="store_true",
+                      help="Flag of whether to add previous state to output.")
   return parser
 
 
 def get_model_dir(parsed_args):
-  exp_name = ("step_" + str(parsed_args.train_steps) +
-              "-batch_" + str(parsed_args.batch_size) +
+  exp_name = ("selector_" + str(parsed_args.selector) +
+              "-dropout_" + str(parsed_args.dropout) +
+              "-ctx2out_" + str(parsed_args.ctx2out) +
+              "-prev2out_" + str(parsed_args.prev2out) +
               "-lr_" + str(parsed_args.lr))
 
   return os.path.join(parsed_args.model_dir, exp_name)
@@ -210,7 +224,11 @@ def main():
     train_steps=parsed_args.train_steps,
     steps_per_eval=parsed_args.steps_per_eval,
     batch_size=parsed_args.batch_size,
-    vgg_model_path=parsed_args.vgg_model_path
+    vgg_model_path=parsed_args.vgg_model_path,
+    selector=parsed_args.selector,
+    dropout=parsed_args.dropout,
+    ctx2out=parsed_args.ctx2out,
+    prev2out=parsed_args.prev2out
   )
 
   learn_runner.run(
