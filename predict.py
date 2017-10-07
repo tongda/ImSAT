@@ -16,10 +16,18 @@ from train import model_fn
 def get_parser():
   parser = argparse.ArgumentParser(description="ImSAT predictor.")
   parser.add_argument("--model-dir", dest="model_dir", type=str,
-                      default="ckp-dir/step_10-batch_2-lr_0.001",
+                      default="ckp-dir/selector_True-dropout_True-ctx2out_True-prev2out_True-lr_0.001",
                       help="Path of checkpoint.")
   parser.add_argument("--batch-size", dest="batch_size", type=int, default=2,
                       help="Batch size.")
+  parser.add_argument("--selector", dest="selector", action="store_true",
+                      help="Flag of whether to use selector for context.")
+  parser.add_argument("--dropout", dest="dropout", action="store_true",
+                      help="Flag of whether to use dropout.")
+  parser.add_argument("--ctx2out", dest="ctx2out", action="store_true",
+                      help="Flag of whether to add context to output.")
+  parser.add_argument("--prev2out", dest="prev2out", action="store_true",
+                      help="Flag of whether to add previous state to output.")
   return parser
 
 
@@ -50,7 +58,11 @@ def main():
   with open(os.path.join("data", 'word_to_idx.pkl'), 'rb') as f:
     word_to_idx = pickle.load(f)
   hparams = HParams(vocab_size=len(word_to_idx),
-                    batch_size=parsed_args.batch_size)
+                    batch_size=parsed_args.batch_size,
+                    selector=parsed_args.selector,
+                    dropout=parsed_args.dropout,
+                    ctx2out=parsed_args.ctx2out,
+                    prev2out=parsed_args.prev2out)
   run_config = RunConfig(model_dir=parsed_args.model_dir)
   estimator = Estimator(
     model_fn=model_fn,

@@ -219,39 +219,43 @@ class AttendTell:
     return tf.nn.rnn_cell.BasicLSTMCell(num_units=self.hidden_size)
 
   def build_train(self, features, captions):
-    cap_shape = tf.shape(captions)
-    bucket_size = cap_shape[1]
+    with tf.variable_scope("attend_and_tell") as root_scope:
+      self.root_scope = root_scope
+      cap_shape = tf.shape(captions)
+      bucket_size = cap_shape[1]
 
-    features = _batch_norm(features, mode='train', name='conv_features')
+      features = _batch_norm(features, mode='train', name='conv_features')
 
-    lstm_cell = self._get_rnn_cell()
-    cond_fn = _get_cond_fn(bucket_size)
-    body_fn = self._get_body_fn(lstm_cell, features, dropout=self.dropout)
-    out_ta = self._get_init_outputs_array()
-    embedded_captions = self._word_embedding(inputs=captions)
-    init_state = self._get_init_state(features=features)
-    loop_vars = [0, out_ta, embedded_captions, init_state]
-    _, outputs, _, _ = control_flow_ops.while_loop(cond_fn,
-                                                   body_fn,
-                                                   loop_vars=loop_vars)
-    outputs = tf.transpose(outputs.stack(), (1, 0, 2))
+      lstm_cell = self._get_rnn_cell()
+      cond_fn = _get_cond_fn(bucket_size)
+      body_fn = self._get_body_fn(lstm_cell, features, dropout=self.dropout)
+      out_ta = self._get_init_outputs_array()
+      embedded_captions = self._word_embedding(inputs=captions)
+      init_state = self._get_init_state(features=features)
+      loop_vars = [0, out_ta, embedded_captions, init_state]
+      _, outputs, _, _ = control_flow_ops.while_loop(cond_fn,
+                                                     body_fn,
+                                                     loop_vars=loop_vars)
+      outputs = tf.transpose(outputs.stack(), (1, 0, 2))
     return outputs
 
   def build_infer(self, features):
-    features = _batch_norm(features, mode='train', name='conv_features')
+    with tf.variable_scope("attend_and_tell") as root_scope:
+      self.root_scope = root_scope
+      features = _batch_norm(features, mode='train', name='conv_features')
 
-    lstm_cell = self._get_rnn_cell()
-    cond_fn = _get_cond_fn()
-    body_fn = self._get_body_fn(lstm_cell, features,
-                                use_generated_inputs=True)
-    out_ta = self._get_init_outputs_array()
-    zero_inputs = self._zero_inputs(features)
-    init_state = self._get_init_state(features=features)
-    loop_vars = [0, out_ta, zero_inputs, init_state]
-    _, outputs, _, _ = control_flow_ops.while_loop(cond_fn,
-                                                   body_fn,
-                                                   loop_vars=loop_vars)
-    outputs = tf.transpose(outputs.stack(), (1, 0, 2))
+      lstm_cell = self._get_rnn_cell()
+      cond_fn = _get_cond_fn()
+      body_fn = self._get_body_fn(lstm_cell, features,
+                                  use_generated_inputs=True)
+      out_ta = self._get_init_outputs_array()
+      zero_inputs = self._zero_inputs(features)
+      init_state = self._get_init_state(features=features)
+      loop_vars = [0, out_ta, zero_inputs, init_state]
+      _, outputs, _, _ = control_flow_ops.while_loop(cond_fn,
+                                                     body_fn,
+                                                     loop_vars=loop_vars)
+      outputs = tf.transpose(outputs.stack(), (1, 0, 2))
     return outputs
 
   def _get_init_outputs_array(self):
@@ -317,11 +321,12 @@ class AttendTell:
       return LSTMStateTuple(c, h)
 
   def _word_embedding(self, inputs, reuse=False):
-    with tf.variable_scope('word_embedding', reuse=reuse), tf.device("/cpu:0"):
-      w = tf.get_variable('w',
-                          [self.vocab_size, self.embedding_size],
-                          initializer=self.emb_initializer)
-      x = tf.nn.embedding_lookup(w, inputs, name='word_vector')
+    with tf.variable_scope(self.root_scope):
+      with tf.variable_scope('word_embedding', reuse=reuse), tf.device("/cpu:0"):
+        w = tf.get_variable('w',
+                            [self.vocab_size, self.embedding_size],
+                            initializer=self.emb_initializer)
+        x = tf.nn.embedding_lookup(w, inputs, name='word_vector')
       return x
 
   # todo: I think this function has some issue. what is this function
