@@ -26,7 +26,7 @@ def model_fn(features, labels, mode, params, config):
     datasets = (features, labels["raw"], labels["index"], cap_lens)
     pad_size = ((224, 224, 3), (), (None,), ())
     batches = Dataset.zip(datasets) \
-      .shuffle(buffer_size=10 * params.batch_size) \
+      .shuffle(buffer_size=200 * params.batch_size) \
       .padded_batch(params.batch_size, pad_size)
 
     if mode == ModeKeys.TRAIN:

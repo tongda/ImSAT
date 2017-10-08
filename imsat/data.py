@@ -47,7 +47,7 @@ class COCO:
                             axis=0)
           return table.lookup(words)
 
-        index_dataset = caption_dataset.map(split_sentence)
+        index_dataset = caption_dataset.map(split_sentence, num_threads=8)
 
         def decode_image(filename):
           image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
@@ -55,7 +55,7 @@ class COCO:
           image = tf.to_float(image)
           return image
 
-        image_dataset = filename_dataset.map(decode_image)
+        image_dataset = filename_dataset.map(decode_image, num_threads=8)
         caption_structure = {
           "raw": caption_dataset,
           "index": index_dataset
@@ -78,7 +78,11 @@ class ChallengerAI:
     img_cap_pairs = []
     for ann in annotations:
       for cap in ann["caption"]:
-        img_cap_pairs.append((ann['image_id'], cap))
+        filename = os.path.join(self.data_dir, "image/%s" % mode, ann['image_id'])
+        if os.path.exists(filename):
+          img_cap_pairs.append((ann['image_id'], cap))
+        else:
+          print("Image Not Exist: %s" % filename)
 
     random.shuffle(img_cap_pairs)
 
@@ -100,7 +104,8 @@ class ChallengerAI:
       # todo: tf has issue with `tf.string_split` with unicode
       #   https://github.com/tensorflow/tensorflow/issues/11399
       #   so I use `py_func` here.
-      index_dataset = caption_dataset.map(lambda text: tf.py_func(my_split, [text], tf.int32))
+      index_dataset = caption_dataset.map(lambda text: tf.py_func(my_split, [text], tf.int32),
+                                          num_threads=8)
 
       def decode_image(filename):
         image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
@@ -108,7 +113,7 @@ class ChallengerAI:
         image = tf.to_float(image)
         return image
 
-      image_dataset = filename_dataset.map(decode_image)
+      image_dataset = filename_dataset.map(decode_image, num_threads=8)
 
       caption_structure = {
         "raw": caption_dataset,
