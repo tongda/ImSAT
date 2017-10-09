@@ -68,11 +68,17 @@ def model_fn(features, labels, mode, params, config):
                      selector=params.selector,
                      dropout=params.dropout,
                      ctx2out=params.ctx2out,
-                     prev2out=params.prev2out)
+                     prev2out=params.prev2out,
+                     hard_attention=params.hard_attention)
   if mode != ModeKeys.INFER:
-    outputs = model.build_train(image_features, cap_idx_tensor)
+    if params.use_sampler:
+      outputs = model.build_train(image_features, cap_idx_tensor,
+                                  use_generated_inputs=True)
+    else:
+      outputs = model.build_train(image_features, cap_idx_tensor,
+                                  use_generated_inputs=False)
     loss_op = create_loss(outputs, cap_idx_tensor, cap_len_tensor)
-    train_op = _get_train_op(loss_op, params.learning_rate)
+    train_op = _get_train_op(loss_op, params.learning_rate, params.hard_attention)
   else:
     outputs = model.build_infer(image_features)
     predictions = tf.argmax(outputs, axis=-1)
@@ -87,10 +93,21 @@ def model_fn(features, labels, mode, params, config):
   )
 
 
-def _get_train_op(loss_op, lr):
+def _get_train_op(loss_op, lr, hard_attention=True):
   optimizer = tf.train.AdamOptimizer(learning_rate=lr)
   trainables = tf.trainable_variables()
   grads = optimizer.compute_gradients(loss_op, trainables)
+
+  if hard_attention:
+    # todo: this loss is not exactly same with "Show Attend and Tell",
+    #   another reference: https://zhuanlan.zhihu.com/p/24879932
+    baseline = tf.Variable(0., trainable=False, name="baseline_var")
+    eva = tf.train.ExponentialMovingAverage(0.9, name="baseline")
+    eva.apply([baseline])
+    baseline = eva.average(baseline)
+    grads = [((loss_op - baseline) * grad, var) if grad is not None else (grad, var)
+             for grad, var in grads]
+
   global_step = tf.contrib.framework.get_global_step()
   train_op = optimizer.apply_gradients(grads, global_step=global_step)
   return train_op
@@ -119,7 +136,7 @@ def experiment_fn(run_config, hparams):
     train_input_fn=dataset.get_input_fn("train"),
     eval_input_fn=dataset.get_input_fn("val"),
     train_steps=hparams.train_steps,
-    eval_steps=500,
+    eval_steps=hparams.eval_steps,
     train_steps_per_iteration=hparams.steps_per_eval,
     eval_hooks=[val_init_hook],
   )
@@ -143,6 +160,8 @@ def get_parser():
                            "evaluation only happens once after train.")
   parser.add_argument("--batch-size", dest="batch_size", type=int, default=2,
                       help="Batch size.")
+  parser.add_argument("--eval-steps", dest="eval_steps", type=int, default=2,
+                      help="Evaluation steps.")
   parser.add_argument("--vgg-model-path", dest="vgg_model_path", type=str,
                       default="data/model/vgg_16.ckpt",
                       help="Path of pre-trained VGG parameters.")
@@ -152,6 +171,10 @@ def get_parser():
                       help="Flag of whether to use dropout.")
   parser.add_argument("--ctx2out", dest="ctx2out", action="store_true",
                       help="Flag of whether to add context to output.")
+  parser.add_argument("--use-sampler", dest="use_sampler", action="store_true", default=False,
+                      help="Flag of whether to add context to output.")
+  parser.add_argument("--hard-attention", dest="hard_attention", action="store_true",
+                      help="Flag of whether to use hard attention.")
   parser.add_argument("--prev2out", dest="prev2out", action="store_true",
                       help="Flag of whether to add previous state to output.")
   parser.add_argument("--dataset", dest="dataset", type=str, default="COCO",
@@ -161,6 +184,7 @@ def get_parser():
 
 def get_model_dir(parsed_args):
   exp_name = ("dataset_" + str(parsed_args.dataset) +
+              "-hard_attention_" + str(parsed_args.hard_attention) +
               "-selector_" + str(parsed_args.selector) +
               "-dropout_" + str(parsed_args.dropout) +
               "-ctx2out_" + str(parsed_args.ctx2out) +
@@ -189,7 +213,10 @@ def main():
     dropout=parsed_args.dropout,
     ctx2out=parsed_args.ctx2out,
     prev2out=parsed_args.prev2out,
-    dataset=parsed_args.dataset
+    dataset=parsed_args.dataset,
+    eval_steps=parsed_args.eval_steps,
+    hard_attention=parsed_args.hard_attention,
+    use_sampler=parsed_args.use_sampler
   )
 
   learn_runner.run(

@@ -4,6 +4,7 @@ from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import tensor_array_ops
 from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple, RNNCell
 
+NULL_WORD_INDEX = 0
 START_WORD_INDEX = 1
 END_WORD_INDEX = 2
 CAPTION_MAX_LENGTH = 41
@@ -16,7 +17,8 @@ def create_loss(outputs, captions, length):
     losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
       logits=outputs[:, :-1, :], labels=captions[:, 1:])
     loss = _mask_loss(length, losses)
-  return loss
+
+    return loss
 
 
 def _mask_loss(length, losses):
@@ -44,6 +46,7 @@ def _align_text(captions, outputs):
   """
   bucket_size = tf.shape(captions)[1]
   output_len = tf.shape(outputs)[1]
+
   # 1st dimension of indices is the No. of dimension to update,
   # since the output shape is (batch, time, word), we should
   # pad on the second dimension, which is `time`.
@@ -112,7 +115,9 @@ class AttendTell:
                ctx2out=True,
                alpha_c=0.0,
                selector=True,
-               dropout=True):
+               dropout=True,
+               hard_attention=True):
+    self.sample_method = "multinormial"
     self.keep_prob = 0.5
     self.prev2out = prev2out
     self.ctx2out = ctx2out
@@ -129,6 +134,7 @@ class AttendTell:
     self.const_initializer = tf.constant_initializer(0.0)
     self.emb_initializer = tf.random_uniform_initializer(minval=-1.0,
                                                          maxval=1.0)
+    self.hard_attention = hard_attention
 
   def _get_body_fn(self,
                    rnn_cell: RNNCell,
@@ -154,11 +160,11 @@ class AttendTell:
     # hidden layer shape: (embedding, hidden_size)
     # h: (batch, hidden_size)
     def body_fn(time, all_outputs: tf.TensorArray, inputs, state: LSTMStateTuple):
-      if not use_generated_inputs:
-        next_inputs = inputs
-        inputs = inputs[:, time, :]
-
       with tf.variable_scope("body_fn"):
+        if not use_generated_inputs:
+          next_inputs = inputs
+          inputs = inputs[:, time, :]
+
         # context: (batch, feature_size)
         # alpha: (batch, position_num)
         context, alpha = self._attention_layer(features, state.h)
@@ -180,11 +186,19 @@ class AttendTell:
         logits = self._decode_rnn_outputs(output, context, inputs, dropout=dropout)
         all_outputs = all_outputs.write(time, logits)
         if use_generated_inputs:
-          next_inputs = self._word_embedding(tf.argmax(logits, axis=-1),
-                                             reuse=True)
+          next_inputs = self._word_embedding(self._sampler(logits), reuse=True)
       return time + 1, all_outputs, next_inputs, nxt_state
 
     return body_fn
+
+  def _sampler(self, logits):
+    if self.sample_method == "argmax":
+      return tf.argmax(logits, axis=-1)
+    elif self.sample_method == "multinormial":
+      return tf.reshape(tf.multinomial(logits, num_samples=1),
+                        shape=(-1,))
+    else:
+      raise Exception("Unknown sample method %s" % self.sample_method)
 
   def _decode_rnn_outputs(self, output, features, previous, dropout=False):
     with tf.variable_scope("decode_rnn_output"):
@@ -218,7 +232,7 @@ class AttendTell:
   def _get_rnn_cell(self):
     return tf.nn.rnn_cell.BasicLSTMCell(num_units=self.hidden_size)
 
-  def build_train(self, features, captions):
+  def build_train(self, features, captions, use_generated_inputs=False):
     with tf.variable_scope("attend_and_tell") as root_scope:
       self.root_scope = root_scope
       cap_shape = tf.shape(captions)
@@ -228,11 +242,16 @@ class AttendTell:
 
       lstm_cell = self._get_rnn_cell()
       cond_fn = _get_cond_fn(bucket_size)
-      body_fn = self._get_body_fn(lstm_cell, features, dropout=self.dropout)
+
+      body_fn = self._get_body_fn(lstm_cell, features, dropout=self.dropout,
+                                  use_generated_inputs=use_generated_inputs)
       out_ta = self._get_init_outputs_array()
-      embedded_captions = self._word_embedding(inputs=captions)
       init_state = self._get_init_state(features=features)
-      loop_vars = [0, out_ta, embedded_captions, init_state]
+      if use_generated_inputs:
+        loop_vars = [0, out_ta, self._word_embedding(inputs=captions[:, 0]), init_state]
+      else:
+        embedded_captions = self._word_embedding(inputs=captions)
+        loop_vars = [0, out_ta, embedded_captions, init_state]
       _, outputs, _, _ = control_flow_ops.while_loop(cond_fn,
                                                      body_fn,
                                                      loop_vars=loop_vars)
@@ -298,9 +317,20 @@ class AttendTell:
       out_att = tf.reshape(flat_att, [-1, self.position_num])  # (N, L)
       alpha = tf.nn.softmax(out_att)
       # context: (batch, feature_length)
-      context = tf.reduce_sum(features * tf.expand_dims(alpha, 2),
-                              axis=1,
-                              name='context')
+      if self.hard_attention:
+        batch_size = tf.shape(features)[0]
+        # todo: generate mask for each sample
+        sample_mask = tf.to_float(tf.multinomial(tf.fill([batch_size, 2], 0.5), 1)[0][0])
+        hard_att = tf.reshape(tf.one_hot(tf.multinomial(alpha, 1), depth=self.position_num),
+                              shape=(-1, self.position_num))
+        alpha = sample_mask * hard_att + \
+                (1 - sample_mask) * alpha
+        context = tf.reduce_sum(features * tf.expand_dims(alpha, 2), axis=1, name='context')
+
+      else:
+        context = tf.reduce_sum(features * tf.expand_dims(alpha, 2),
+                                axis=1,
+                                name='context')
       return context, alpha
 
   def _get_init_state(self, features):
@@ -345,37 +375,3 @@ class AttendTell:
       features_proj = tf.reshape(features_proj,
                                  [-1, self.position_num, self.feature_length])
       return features_proj
-
-  def _decode_lstm(self, x, h, context, dropout=False, reuse=False):
-    with tf.variable_scope('logits', reuse=reuse):
-      w_h = tf.get_variable('w_h',
-                            [self.hidden_size, self.embedding_size],
-                            initializer=self.weight_initializer)
-      b_h = tf.get_variable('b_h',
-                            [self.embedding_size],
-                            initializer=self.const_initializer)
-      w_out = tf.get_variable('w_out',
-                              [self.embedding_size, self.vocab_size],
-                              initializer=self.weight_initializer)
-      b_out = tf.get_variable('b_out',
-                              [self.vocab_size],
-                              initializer=self.const_initializer)
-
-      if dropout:
-        h = tf.nn.dropout(h, 0.5)
-      h_logits = tf.matmul(h, w_h) + b_h
-
-      if self.ctx2out:
-        w_ctx2out = tf.get_variable('w_ctx2out',
-                                    [self.D, self.M],
-                                    initializer=self.weight_initializer)
-        h_logits += tf.matmul(context, w_ctx2out)
-
-      if self.prev2out:
-        h_logits += x
-      h_logits = tf.nn.tanh(h_logits)
-
-      if dropout:
-        h_logits = tf.nn.dropout(h_logits, 0.5)
-      out_logits = tf.matmul(h_logits, w_out) + b_out
-      return out_logits
