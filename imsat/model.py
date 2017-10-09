@@ -6,7 +6,7 @@ from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple, RNNCell
 
 START_WORD_INDEX = 1
 END_WORD_INDEX = 2
-CAPTION_MAX_LENGTH = 16
+CAPTION_MAX_LENGTH = 41
 
 
 def create_loss(outputs, captions, length):

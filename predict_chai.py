@@ -78,7 +78,7 @@ def main():
   all_predicions = []
   num_generated = 0
   for pred in pred_results:
-    result = ' '.join([idx_to_word[idx] for idx in pred if idx != 0 and idx != 2])
+    result = ''.join([idx_to_word[idx] for idx in pred if idx != 0 and idx != 2])
     all_predicions.append(result)
     num_generated = num_generated + 1
     if num_generated % 1000 == 0:
