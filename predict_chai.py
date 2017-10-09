@@ -87,7 +87,7 @@ def main():
   total_results = [{"image_id": img_id, "caption": pred}
                    for img_id, pred
                    in zip(image_ids, all_predicions)]
-  with open("result.json", "w") as f:
+  with open("result.json", "w", encoding="utf-8") as f:
     json.dump(total_results, f, ensure_ascii=False)
 
 
