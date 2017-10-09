@@ -96,7 +96,8 @@ class ChallengerAI:
 
       def my_split(text):
         text = text.decode("utf-8")
-        idx = [self.word_to_idx[ch] for ch in text]
+        # todo: take care of the unknown character.
+        idx = [self.word_to_idx.get(ch, 0) for ch in text]
         idx.insert(0, self.word_to_idx['<START>'])
         idx.append(self.word_to_idx['<END>'])
         return np.array(idx, dtype=np.int32)
