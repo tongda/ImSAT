@@ -88,7 +88,7 @@ def main():
                    for img_id, pred
                    in zip(image_ids, all_predicions)]
   with open("result.json", "w") as f:
-    json.dump(total_results, f)
+    json.dump(total_results, f, ensure_ascii=False)
 
 
 if __name__ == '__main__':
