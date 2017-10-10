@@ -106,7 +106,7 @@ def _get_train_op(loss_op, lr, hard_attention=True):
     ema_ap = ema.apply([baseline])
     with tf.control_dependencies([ema_ap]):
       baseline_average = ema.average(baseline)
-      grads = [((loss_op - baseline_average) * grad, var) if grad is not None else (grad, var)
+      grads = [((1 + loss_op - baseline_average) * grad, var) if grad is not None else (grad, var)
                for grad, var in grads]
       baseline_update = tf.assign(baseline, loss_op)
       with tf.control_dependencies([baseline_update]):
