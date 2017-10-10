@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.contrib.layers import fully_connected
+from tensorflow.python.estimator.model_fn import ModeKeys
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import tensor_array_ops
 from tensorflow.python.ops.rnn_cell_impl import LSTMStateTuple, RNNCell
@@ -62,12 +63,12 @@ def _align_text(captions, outputs):
   return outputs
 
 
-def _batch_norm(x, mode='train', name=None):
+def _batch_norm(x, mode=ModeKeys.TRAIN, name=None):
   return tf.contrib.layers.batch_norm(inputs=x,
                                       decay=0.95,
                                       center=True,
                                       scale=True,
-                                      is_training=(mode == 'train'),
+                                      is_training=(mode == ModeKeys.TRAIN),
                                       updates_collections=None,
                                       scope=(name + 'batch_norm'))
 
@@ -106,17 +107,8 @@ def _get_cond_fn(max_length=CAPTION_MAX_LENGTH):
 
 
 class AttendTell:
-  def __init__(self,
-               vocab_size,
-               dim_feature=(196, 512),
-               dim_embed=512,
-               dim_hidden=1024,
-               prev2out=True,
-               ctx2out=True,
-               alpha_c=0.0,
-               selector=True,
-               dropout=True,
-               hard_attention=True):
+  def __init__(self, vocab_size, dim_feature=(196, 512), dim_embed=512, dim_hidden=1024, prev2out=True, ctx2out=True,
+               alpha_c=0.0, selector=True, dropout=True, hard_attention=True, mode=ModeKeys.TRAIN):
     self.sample_method = "multinormial"
     self.keep_prob = 0.5
     self.prev2out = prev2out
@@ -135,6 +127,7 @@ class AttendTell:
     self.emb_initializer = tf.random_uniform_initializer(minval=-1.0,
                                                          maxval=1.0)
     self.hard_attention = hard_attention
+    self.mode = mode
 
   def _get_body_fn(self,
                    rnn_cell: RNNCell,
@@ -182,6 +175,7 @@ class AttendTell:
 
         # decoder_input: (batch, embedding_size + feature_size)
         decoder_input = tf.concat(values=[inputs, context], axis=1, name="decoder_input")
+
         output, nxt_state = rnn_cell(decoder_input, state=state)
         logits = self._decode_rnn_outputs(output, context, inputs, dropout=dropout)
         all_outputs = all_outputs.write(time, logits)
@@ -202,8 +196,6 @@ class AttendTell:
 
   def _decode_rnn_outputs(self, output, features, previous, dropout=False):
     with tf.variable_scope("decode_rnn_output"):
-      if dropout:
-        output = tf.nn.dropout(output, keep_prob=self.keep_prob)
       hidden = fully_connected(inputs=output,
                                num_outputs=self.embedding_size,
                                activation_fn=None)
@@ -230,7 +222,13 @@ class AttendTell:
     return logits
 
   def _get_rnn_cell(self):
-    return tf.nn.rnn_cell.BasicLSTMCell(num_units=self.hidden_size)
+    cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.hidden_size)
+    if self.mode == ModeKeys.TRAIN:
+      cell = tf.nn.rnn_cell.DropoutWrapper(cell,
+                                           input_keep_prob=self.keep_prob,
+                                           state_keep_prob=self.keep_prob,
+                                           output_keep_prob=self.keep_prob)
+    return cell
 
   def build_train(self, features, captions, use_generated_inputs=False):
     with tf.variable_scope("attend_and_tell") as root_scope:
@@ -238,7 +236,7 @@ class AttendTell:
       cap_shape = tf.shape(captions)
       bucket_size = cap_shape[1]
 
-      features = _batch_norm(features, mode='train', name='conv_features')
+      features = _batch_norm(features, name='conv_features')
 
       lstm_cell = self._get_rnn_cell()
       cond_fn = _get_cond_fn(bucket_size)
@@ -261,7 +259,7 @@ class AttendTell:
   def build_infer(self, features):
     with tf.variable_scope("attend_and_tell") as root_scope:
       self.root_scope = root_scope
-      features = _batch_norm(features, mode='train', name='conv_features')
+      features = _batch_norm(features, mode='infer', name='conv_features')
 
       lstm_cell = self._get_rnn_cell()
       cond_fn = _get_cond_fn()

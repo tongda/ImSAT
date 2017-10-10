@@ -69,7 +69,8 @@ def model_fn(features, labels, mode, params, config):
                      dropout=params.dropout,
                      ctx2out=params.ctx2out,
                      prev2out=params.prev2out,
-                     hard_attention=params.hard_attention)
+                     hard_attention=params.hard_attention,
+                     mode=mode)
   if mode != ModeKeys.INFER:
     if params.use_sampler:
       outputs = model.build_train(image_features, cap_idx_tensor,
