@@ -97,19 +97,23 @@ def _get_train_op(loss_op, lr, hard_attention=True):
   optimizer = tf.train.AdamOptimizer(learning_rate=lr)
   trainables = tf.trainable_variables()
   grads = optimizer.compute_gradients(loss_op, trainables)
-
+  global_step = tf.contrib.framework.get_global_step()
   if hard_attention:
     # todo: this loss is not exactly same with "Show Attend and Tell",
     #   another reference: https://zhuanlan.zhihu.com/p/24879932
     baseline = tf.Variable(0., trainable=False, name="baseline_var")
-    eva = tf.train.ExponentialMovingAverage(0.9, name="baseline")
-    eva.apply([baseline])
-    baseline = eva.average(baseline)
-    grads = [((loss_op - baseline) * grad, var) if grad is not None else (grad, var)
-             for grad, var in grads]
-
-  global_step = tf.contrib.framework.get_global_step()
-  train_op = optimizer.apply_gradients(grads, global_step=global_step)
+    ema = tf.train.ExponentialMovingAverage(0.9, name="baseline")
+    ema_ap = ema.apply([baseline])
+    with tf.control_dependencies([ema_ap]):
+      baseline_average = ema.average(baseline)
+      baseline_average = tf.Print(baseline_average, [baseline_average], "baseline: ")
+      grads = [((loss_op - baseline_average) * grad, var) if grad is not None else (grad, var)
+               for grad, var in grads]
+      baseline_update = tf.assign(baseline, loss_op)
+      with tf.control_dependencies([baseline_update]):
+        train_op = optimizer.apply_gradients(grads, global_step=global_step)
+  else:
+    train_op = optimizer.apply_gradients(grads, global_step=global_step)
   return train_op
 
 
