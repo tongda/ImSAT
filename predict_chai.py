@@ -33,7 +33,7 @@ def get_parser():
 
 
 def get_input_fn():
-  filenames = glob.glob("data/challenger.ai/image/val/*")
+  filenames = glob.glob("data/challenger.ai/image/test/*")
   image_ids = [fn.split("/")[-1] for fn in filenames]
 
   def input_fn():
