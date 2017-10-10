@@ -51,7 +51,7 @@ class COCO:
 
         def decode_image(filename):
           image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
-          image = tf.image.resize_images(image, [224, 224])
+          # image = tf.image.resize_images(image, [224, 224])
           image = tf.to_float(image)
           return image
 
@@ -110,7 +110,7 @@ class ChallengerAI:
 
       def decode_image(filename):
         image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
-        image = tf.image.resize_images(image, [224, 224])
+        # image = tf.image.resize_images(image, [224, 224])
         image = tf.to_float(image)
         return image
 

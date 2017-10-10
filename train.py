@@ -15,16 +15,31 @@ from tensorflow.python.estimator.model_fn import EstimatorSpec
 from imsat.data import COCO, ChallengerAI
 from imsat.hook import IteratorInitializerHook
 from imsat.model import AttendTell, create_loss
+from imsat.layer import spatial_pyramid_pooling
 
 
 def model_fn(features, labels, mode, params, config):
-  image_tensor = caption_tensor = cap_idx_tensor = cap_len_tensor = None
+  feat_tensor = caption_tensor = cap_idx_tensor = cap_len_tensor = None
   scaffold = None
 
   if mode == ModeKeys.TRAIN or mode == ModeKeys.EVAL:
     cap_lens = labels["index"].map(lambda t: tf.size(t))
+
+    bin_size = 14
+
+    def extract_feats(image):
+      _, end_points = vgg.vgg_16(tf.expand_dims(image, 0),
+                                 is_training=(mode == ModeKeys.TRAIN),
+                                 spatial_squeeze=False)
+      final_conv_layer = end_points['vgg_16/conv5/conv5_3']
+      feats = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
+      return tf.reshape(feats, shape=(bin_size * bin_size, tf.shape(final_conv_layer)[-1]))
+
+    features = features.map(extract_feats)
+
     datasets = (features, labels["raw"], labels["index"], cap_lens)
-    pad_size = ((224, 224, 3), (), (None,), ())
+    # todo: 512 is the feature depth, should not hard code here
+    pad_size = ((bin_size * bin_size, 512), (), (None,), ())
     batches = Dataset.zip(datasets) \
       .shuffle(buffer_size=200 * params.batch_size) \
       .padded_batch(params.batch_size, pad_size)
@@ -33,14 +48,14 @@ def model_fn(features, labels, mode, params, config):
       train_iterator = batches \
         .repeat() \
         .make_initializable_iterator()
-      image_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
+      feat_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
         train_iterator.get_next()
       tf.add_to_collection("train_initializer", train_iterator.initializer)
 
     if mode == ModeKeys.EVAL:
       val_iterator = batches \
         .make_initializable_iterator()
-      image_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
+      feat_tensor, caption_tensor, cap_idx_tensor, cap_len_tensor = \
         val_iterator.get_next()
       tf.add_to_collection("val_initializer", val_iterator.initializer)
       scaffold = tf.train.Scaffold(init_op=val_iterator.initializer)
@@ -48,12 +63,8 @@ def model_fn(features, labels, mode, params, config):
   if mode == ModeKeys.INFER:
     batches = features.batch(params.batch_size)
     infer_iterator = batches.make_initializable_iterator()
-    image_tensor = infer_iterator.get_next()
+    feat_tensor = infer_iterator.get_next()
     tf.add_to_collection("infer_initializer", infer_iterator.initializer)
-
-  _, end_points = vgg.vgg_16(image_tensor)
-  image_features = end_points['vgg_16/conv5/conv5_3']
-  image_features = tf.reshape(image_features, shape=[-1, 196, 512])
 
   if mode == ModeKeys.TRAIN:
     variables_to_restore = slim.get_variables_to_restore(exclude=['fc6', 'fc7', 'fc8'])
@@ -73,15 +84,15 @@ def model_fn(features, labels, mode, params, config):
                      mode=mode)
   if mode != ModeKeys.INFER:
     if params.use_sampler:
-      outputs = model.build_train(image_features, cap_idx_tensor,
+      outputs = model.build_train(feat_tensor, cap_idx_tensor,
                                   use_generated_inputs=True)
     else:
-      outputs = model.build_train(image_features, cap_idx_tensor,
+      outputs = model.build_train(feat_tensor, cap_idx_tensor,
                                   use_generated_inputs=False)
     loss_op = create_loss(outputs, cap_idx_tensor, cap_len_tensor)
     train_op = _get_train_op(loss_op, params.learning_rate, params.hard_attention)
   else:
-    outputs = model.build_infer(image_features)
+    outputs = model.build_infer(feat_tensor)
     predictions = tf.argmax(outputs, axis=-1)
 
   return EstimatorSpec(
