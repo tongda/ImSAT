@@ -180,6 +180,8 @@ class AttendTell:
         logits = self._decode_rnn_outputs(output, context, inputs, dropout=dropout)
         all_outputs = all_outputs.write(time, logits)
         if use_generated_inputs:
+          # todo: if hard attention is used, the policy gradient should be the distribution log likelihood:
+          #   which means, we need to cache the sampled logit and then calc gradient of it with respect to weights.
           next_inputs = self._word_embedding(self._sampler(logits), reuse=True)
       return time + 1, all_outputs, next_inputs, nxt_state
 

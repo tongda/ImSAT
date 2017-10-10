@@ -21,28 +21,33 @@ from imsat.layer import spatial_pyramid_pooling
 def model_fn(features, labels, mode, params, config):
   feat_tensor = caption_tensor = cap_idx_tensor = cap_len_tensor = None
   scaffold = None
+  bin_size = 14
 
   if mode == ModeKeys.TRAIN or mode == ModeKeys.EVAL:
     cap_lens = labels["index"].map(lambda t: tf.size(t))
 
-    bin_size = 14
-
     def extract_feats(image):
-      _, end_points = vgg.vgg_16(tf.expand_dims(image, 0),
-                                 is_training=(mode == ModeKeys.TRAIN),
-                                 spatial_squeeze=False)
-      final_conv_layer = end_points['vgg_16/conv5/conv5_3']
-      feats = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
+      with tf.device("/gpu:0"):
+        _, end_points = vgg.vgg_16(tf.expand_dims(image, 0),
+                                   is_training=(mode == ModeKeys.TRAIN),
+                                   spatial_squeeze=False)
+        final_conv_layer = end_points['vgg_16/conv5/conv5_3']
+        feats = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
       return tf.reshape(feats, shape=(bin_size * bin_size, tf.shape(final_conv_layer)[-1]))
 
-    features = features.map(extract_feats)
+    # todo: cannot utilize GPU to accelerate input pipeline, so train 1 by 1
+    # features = features.map(extract_feats)
 
     datasets = (features, labels["raw"], labels["index"], cap_lens)
     # todo: 512 is the feature depth, should not hard code here
-    pad_size = ((bin_size * bin_size, 512), (), (None,), ())
+    # pad_size = ((bin_size * bin_size, 512), (), (None,), ())
+    pad_size = ((None, None, 3), (), (None,), ())
+    # todo: cannot utilize GPU to accelerate input pipeline, so train 1 by 1
     batches = Dataset.zip(datasets) \
       .shuffle(buffer_size=200 * params.batch_size) \
-      .padded_batch(params.batch_size, pad_size)
+      .padded_batch(1, pad_size)
+      # .padded_batch(params.batch_size, pad_size)
+
 
     if mode == ModeKeys.TRAIN:
       train_iterator = batches \
@@ -66,6 +71,8 @@ def model_fn(features, labels, mode, params, config):
     feat_tensor = infer_iterator.get_next()
     tf.add_to_collection("infer_initializer", infer_iterator.initializer)
 
+  feat_tensor = _extract_feats(bin_size, feat_tensor, mode)
+  # feat_tensor = feat_tensor
   if mode == ModeKeys.TRAIN:
     variables_to_restore = slim.get_variables_to_restore(exclude=['fc6', 'fc7', 'fc8'])
     init_fn = assign_from_checkpoint_fn(params.vgg_model_path, variables_to_restore)
@@ -103,6 +110,16 @@ def model_fn(features, labels, mode, params, config):
     scaffold=scaffold
     # eval_metric_ops={"Accuracy": tf.metrics.accuracy(labels=labels['answer'], predictions=predictions, name='accuracy')}
   )
+
+
+def _extract_feats(bin_size, image_tensor, mode):
+  _, end_points = vgg.vgg_16(image_tensor,
+                             is_training=(mode == ModeKeys.TRAIN),
+                             spatial_squeeze=False)
+  final_conv_layer = end_points['vgg_16/conv5/conv5_3']
+  feat_tensor = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
+  feat_tensor = tf.reshape(feat_tensor, shape=(-1, bin_size * bin_size, 512))
+  return feat_tensor
 
 
 def _get_train_op(loss_op, lr, hard_attention=True):
