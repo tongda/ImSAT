@@ -7,35 +7,34 @@ from tensorflow.contrib.data import Dataset
 from tensorflow.contrib.framework import assign_from_checkpoint_fn
 from tensorflow.contrib.learn import Experiment, RunConfig, ModeKeys
 from tensorflow.contrib.learn.python.learn import learn_runner
-from tensorflow.contrib.slim.nets import vgg
 from tensorflow.contrib.training import HParams
 from tensorflow.python.estimator.estimator import Estimator
 from tensorflow.python.estimator.model_fn import EstimatorSpec
 
 from imsat.data import COCO, ChallengerAI
 from imsat.hook import IteratorInitializerHook
-from imsat.model import AttendTell, create_loss
+from imsat.inception_v4 import inception_v4_base, inception_v4_arg_scope
 from imsat.layer import spatial_pyramid_pooling
+from imsat.model import AttendTell, create_loss
 
 
 def model_fn(features, labels, mode, params, config):
   feat_tensor = caption_tensor = cap_idx_tensor = cap_len_tensor = None
   scaffold = None
-  bin_size = 14
+  bin_size = 8
 
   if mode == ModeKeys.TRAIN or mode == ModeKeys.EVAL:
     cap_lens = labels["index"].map(lambda t: tf.size(t))
 
-    def extract_feats(image):
-      with tf.device("/gpu:0"):
-        _, end_points = vgg.vgg_16(tf.expand_dims(image, 0),
-                                   is_training=(mode == ModeKeys.TRAIN),
-                                   spatial_squeeze=False)
-        final_conv_layer = end_points['vgg_16/conv5/conv5_3']
-        feats = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
-      return tf.reshape(feats, shape=(bin_size * bin_size, tf.shape(final_conv_layer)[-1]))
-
     # todo: cannot utilize GPU to accelerate input pipeline, so train 1 by 1
+    # def extract_feats(image):
+    #   with tf.device("/gpu:0"):
+    #     _, end_points = vgg.vgg_16(tf.expand_dims(image, 0),
+    #                                is_training=(mode == ModeKeys.TRAIN),
+    #                                spatial_squeeze=False)
+    #     final_conv_layer = end_points['vgg_16/conv5/conv5_3']
+    #     feats = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
+    #   return tf.reshape(feats, shape=(bin_size * bin_size, tf.shape(final_conv_layer)[-1]))
     # features = features.map(extract_feats)
 
     datasets = (features, labels["raw"], labels["index"], cap_lens)
@@ -46,8 +45,6 @@ def model_fn(features, labels, mode, params, config):
     batches = Dataset.zip(datasets) \
       .shuffle(buffer_size=200 * params.batch_size) \
       .padded_batch(1, pad_size)
-      # .padded_batch(params.batch_size, pad_size)
-
 
     if mode == ModeKeys.TRAIN:
       train_iterator = batches \
@@ -72,9 +69,8 @@ def model_fn(features, labels, mode, params, config):
     tf.add_to_collection("infer_initializer", infer_iterator.initializer)
 
   feat_tensor = _extract_feats(bin_size, feat_tensor, mode)
-  # feat_tensor = feat_tensor
   if mode == ModeKeys.TRAIN:
-    variables_to_restore = slim.get_variables_to_restore(exclude=['fc6', 'fc7', 'fc8'])
+    variables_to_restore = slim.get_variables_to_restore(exclude=['global_step'])
     init_fn = assign_from_checkpoint_fn(params.vgg_model_path, variables_to_restore)
     # signature of sc
     scaffold = tf.train.Scaffold(init_fn=lambda _, sess: init_fn(sess))
@@ -108,17 +104,17 @@ def model_fn(features, labels, mode, params, config):
     loss=loss_op,
     train_op=train_op,
     scaffold=scaffold
-    # eval_metric_ops={"Accuracy": tf.metrics.accuracy(labels=labels['answer'], predictions=predictions, name='accuracy')}
   )
 
 
 def _extract_feats(bin_size, image_tensor, mode):
-  _, end_points = vgg.vgg_16(image_tensor,
-                             is_training=(mode == ModeKeys.TRAIN),
-                             spatial_squeeze=False)
-  final_conv_layer = end_points['vgg_16/conv5/conv5_3']
+  arg_scope = inception_v4_arg_scope()
+
+  with slim.arg_scope(arg_scope):
+    final_conv_layer, end_points = inception_v4_base(image_tensor)
+
   feat_tensor = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
-  feat_tensor = tf.reshape(feat_tensor, shape=(-1, bin_size * bin_size, 512))
+  feat_tensor = tf.reshape(feat_tensor, shape=(-1, bin_size * bin_size, 1536))
   return feat_tensor
 
 
@@ -195,7 +191,7 @@ def get_parser():
   parser.add_argument("--eval-steps", dest="eval_steps", type=int, default=2,
                       help="Evaluation steps.")
   parser.add_argument("--vgg-model-path", dest="vgg_model_path", type=str,
-                      default="data/model/vgg_16.ckpt",
+                      default="data/model/inception_v4.ckpt",
                       help="Path of pre-trained VGG parameters.")
   parser.add_argument("--selector", dest="selector", action="store_true",
                       help="Flag of whether to use selector for context.")

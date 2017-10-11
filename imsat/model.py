@@ -107,8 +107,11 @@ def _get_cond_fn(max_length=CAPTION_MAX_LENGTH):
 
 
 class AttendTell:
-  def __init__(self, vocab_size, dim_feature=(196, 512), dim_embed=512, dim_hidden=1024, prev2out=True, ctx2out=True,
-               alpha_c=0.0, selector=True, dropout=True, hard_attention=True, mode=ModeKeys.TRAIN):
+  def __init__(self, vocab_size, dim_feature=(64, 1536),
+               dim_embed=512, dim_hidden=1024,
+               prev2out=True, ctx2out=True,
+               alpha_c=0.0, selector=True, dropout=True,
+               hard_attention=True, mode=ModeKeys.TRAIN):
     self.sample_method = "multinormial"
     self.keep_prob = 0.5
     self.prev2out = prev2out
