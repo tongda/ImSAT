@@ -108,13 +108,7 @@ class ChallengerAI:
       index_dataset = caption_dataset.map(lambda text: tf.py_func(my_split, [text], tf.int32),
                                           num_threads=8)
 
-      def decode_image(filename):
-        image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
-        # image = tf.image.resize_images(image, [224, 224])
-        image = tf.to_float(image)
-        return image
-
-      image_dataset = filename_dataset.map(decode_image, num_threads=8)
+      image_dataset = filename_dataset.map(get_decode_image_fn(mode == "train"), num_threads=8)
 
       caption_structure = {
         "raw": caption_dataset,
@@ -123,6 +117,47 @@ class ChallengerAI:
       return image_dataset, caption_structure
 
     return input_fn
+
+
+def get_decode_image_fn(is_training=True):
+  def decode_image(filename):
+    image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
+    # image = tf.image.resize_images(image, [224, 224])
+    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+    if is_training:
+      image = distort_image(image)
+    image = tf.subtract(image, 0.5)
+    image = tf.multiply(image, 2.0)
+    return image
+
+  return decode_image
+
+
+def distort_image(image):
+  """Perform random distortions on an image.
+
+  Args:
+    image: A float32 Tensor of shape [height, width, 3] with values in [0, 1).
+
+  Returns:
+    distorted_image: A float32 Tensor of shape [height, width, 3] with values in
+      [0, 1].
+  """
+  # Randomly flip horizontally.
+  with tf.name_scope("flip_horizontal", values=[image]):
+    image = tf.image.random_flip_left_right(image)
+
+  # Randomly distort the colors based on thread id.
+  with tf.name_scope("distort_color", values=[image]):
+    image = tf.image.random_brightness(image, max_delta=32. / 255.)
+    image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+    image = tf.image.random_hue(image, max_delta=0.032)
+    image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+
+    # The random_* ops do not necessarily clamp.
+    image = tf.clip_by_value(image, 0.0, 1.0)
+
+  return image
 
 
 def process_caption(caption):

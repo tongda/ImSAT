@@ -10,6 +10,7 @@ from tensorflow.contrib.learn import RunConfig
 from tensorflow.contrib.training import HParams
 from tensorflow.python.estimator.estimator import Estimator
 
+from imsat.data import get_decode_image_fn
 from imsat.hook import IteratorInitializerHook
 from train import model_fn
 
@@ -39,14 +40,7 @@ def get_input_fn():
   def input_fn():
     with tf.variable_scope("input_fn"), tf.device("/cpu:0"):
       filename_dataset = Dataset.from_tensor_slices(list(filenames))
-
-      def decode_image(filename):
-        image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
-        image = tf.image.resize_images(image, [224, 224])
-        image = tf.to_float(image)
-        return image
-
-      image_dataset = filename_dataset.map(decode_image)
+      image_dataset = filename_dataset.map(get_decode_image_fn(is_training=False))
     return image_dataset, None
 
   return image_ids, input_fn

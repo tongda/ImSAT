@@ -121,7 +121,8 @@ def _extract_feats(bin_size, image_tensor, mode):
 def _get_train_op(loss_op, lr, hard_attention=True):
   optimizer = tf.train.AdamOptimizer(learning_rate=lr)
   trainables = tf.trainable_variables()
-  grads = optimizer.compute_gradients(loss_op, trainables)
+  filtered_vars = [var for var in trainables if "InceptionV4" not in var.name]
+  grads = optimizer.compute_gradients(loss_op, filtered_vars)
   global_step = tf.contrib.framework.get_global_step()
   if hard_attention:
     # todo: this loss is not exactly same with "Show Attend and Tell",
@@ -228,6 +229,7 @@ def main():
   parsed_args = get_parser().parse_args()
 
   session_config = tf.ConfigProto(allow_soft_placement=True)
+  session_config.gpu_options.allow_growth = True
   run_config = RunConfig(session_config=session_config)
   run_config = run_config.replace(model_dir=get_model_dir(parsed_args))
 
