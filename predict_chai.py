@@ -30,6 +30,8 @@ def get_parser():
                       help="Flag of whether to add context to output.")
   parser.add_argument("--prev2out", dest="prev2out", action="store_true",
                       help="Flag of whether to add previous state to output.")
+  parser.add_argument("--hard-attention", dest="hard_attention", action="store_true",
+                      help="Flag of whether to use hard attention.")
   return parser
 
 
@@ -55,7 +57,8 @@ def main():
                     selector=parsed_args.selector,
                     dropout=parsed_args.dropout,
                     ctx2out=parsed_args.ctx2out,
-                    prev2out=parsed_args.prev2out)
+                    prev2out=parsed_args.prev2out,
+                    hard_attention=parsed_args.hard_attention)
   run_config = RunConfig(model_dir=parsed_args.model_dir)
   estimator = Estimator(
     model_fn=model_fn,
