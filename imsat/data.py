@@ -71,7 +71,7 @@ class ChallengerAI:
     with open(os.path.join(data_dir, 'word_to_idx.pkl'), 'rb') as f:
       self.word_to_idx = pickle.load(f)
 
-  def get_input_fn(self, mode):
+  def get_input_fn(self, mode, is_distort=False):
     with open(os.path.join(self.data_dir, "annotations/caption_%s_annotations_20170902.json" % mode)) as f:
       annotations = json.load(f)
 
@@ -108,7 +108,7 @@ class ChallengerAI:
       index_dataset = caption_dataset.map(lambda text: tf.py_func(my_split, [text], tf.int32),
                                           num_threads=8)
 
-      image_dataset = filename_dataset.map(get_decode_image_fn(mode == "train"), num_threads=8)
+      image_dataset = filename_dataset.map(get_decode_image_fn(is_training=is_distort), num_threads=8)
 
       caption_structure = {
         "raw": caption_dataset,

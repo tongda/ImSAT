@@ -162,7 +162,7 @@ def experiment_fn(run_config, hparams):
 
   experiment = Experiment(
     estimator=estimator,
-    train_input_fn=dataset.get_input_fn("train"),
+    train_input_fn=dataset.get_input_fn("train", is_distort=True),
     eval_input_fn=dataset.get_input_fn("val"),
     train_steps=hparams.train_steps,
     eval_steps=hparams.eval_steps,
