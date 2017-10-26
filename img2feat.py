@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.contrib import slim
 from tensorflow.contrib.framework import assign_from_checkpoint_fn
+from tensorflow.python.framework.errors_impl import OutOfRangeError
 
 from imsat.inception_v4 import inception_v4_base, inception_v4_arg_scope
 from imsat.layer import spatial_pyramid_pooling
@@ -87,7 +88,7 @@ def main(mode):
       writer.write(example.SerializeToString())
       print(i)
       i += 1
-    except Exception as e:
+    except OutOfRangeError as e:
       print(e)
       break
 
