@@ -88,7 +88,8 @@ def main(mode):
       print(i)
       i += 1
     except Exception as e:
-      raise e
+      print(e)
+      break
 
   writer.close()
 
