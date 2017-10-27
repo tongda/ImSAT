@@ -18,6 +18,103 @@ from imsat.layer import spatial_pyramid_pooling
 from imsat.model import AttendTell, create_loss
 
 
+def model_fn_inner(features, labels, mode, params, config):
+  feat_tensor = cap_idx_tensor = cap_len_tensor = None
+  scaffold = None
+  if mode == ModeKeys.TRAIN or mode == ModeKeys.EVAL:
+    cap_lens = labels.map(lambda t: tf.size(t))
+
+    pad_size = ((params.bin_size * params.bin_size, 1536), (None,), ())
+    batches = tf.data.Dataset.zip((features, labels, cap_lens)) \
+      .shuffle(buffer_size=200 * params.batch_size) \
+      .padded_batch(params.batch_size, pad_size)
+
+    if mode == ModeKeys.TRAIN:
+      train_iterator = batches \
+        .repeat() \
+        .make_initializable_iterator()
+      feat_tensor, cap_idx_tensor, cap_len_tensor = \
+        train_iterator.get_next()
+      tf.add_to_collection("train_initializer", train_iterator.initializer)
+
+    if mode == ModeKeys.EVAL:
+      val_iterator = batches \
+        .make_initializable_iterator()
+      feat_tensor, cap_idx_tensor, cap_len_tensor = \
+        val_iterator.get_next()
+      tf.add_to_collection("val_initializer", val_iterator.initializer)
+      scaffold = tf.train.Scaffold(init_op=val_iterator.initializer)
+
+  if mode == ModeKeys.INFER:
+    batches = features.batch(params.batch_size)
+    infer_iterator = batches.make_initializable_iterator()
+    feat_tensor = infer_iterator.get_next()
+    tf.add_to_collection("infer_initializer", infer_iterator.initializer)
+
+  loss_op = None
+  train_op = None
+  predictions = None
+  model = AttendTell(vocab_size=params.vocab_size,
+                     dim_feature=(params.bin_size * params.bin_size, 1536),
+                     selector=params.selector,
+                     dropout=params.dropout,
+                     ctx2out=params.ctx2out,
+                     prev2out=params.prev2out,
+                     hard_attention=params.hard_attention,
+                     mode=mode)
+  if mode != ModeKeys.INFER:
+    if params.use_sampler:
+      outputs = model.build_train(feat_tensor, cap_idx_tensor,
+                                  use_generated_inputs=True)
+    else:
+      outputs = model.build_train(feat_tensor, cap_idx_tensor,
+                                  use_generated_inputs=False)
+    loss_op = create_loss(outputs, cap_idx_tensor, cap_len_tensor)
+    train_op = _get_train_op(loss_op, params.learning_rate, params.hard_attention)
+  else:
+    outputs = model.build_infer(feat_tensor)
+    predictions = tf.argmax(outputs, axis=-1)
+
+  return EstimatorSpec(
+    mode=mode,
+    predictions=predictions,
+    loss=loss_op,
+    train_op=train_op,
+    scaffold=scaffold
+  )
+
+
+def experiment_fn_inner(run_config, hparams):
+  if hparams.dataset == "COCO":
+    dataset = COCO("data/coco")
+  elif hparams.dataset == "challenger.ai":
+    dataset = ChallengerAI("data/challenger.ai")
+  else:
+    raise Exception("Unknown Dataset Name: '%s'." % hparams.dataset)
+
+  hparams.add_hparam("vocab_size", len(dataset.word_to_idx))
+
+  estimator = Estimator(
+    model_fn=model_fn_inner,
+    params=hparams,
+    config=run_config)
+
+  train_init_hook = IteratorInitializerHook("train")
+  val_init_hook = IteratorInitializerHook("val")
+
+  experiment = Experiment(
+    estimator=estimator,
+    train_input_fn=dataset.get_tfrecords_input_fn("train", hparams.bin_size),
+    eval_input_fn=dataset.get_tfrecords_input_fn("val", hparams.bin_size),
+    train_steps=hparams.train_steps,
+    eval_steps=hparams.eval_steps,
+    train_steps_per_iteration=hparams.steps_per_eval,
+    eval_hooks=[val_init_hook],
+  )
+  experiment.extend_train_hooks([train_init_hook])
+  return experiment
+
+
 def model_fn(features, labels, mode, params, config):
   feat_tensor = caption_tensor = cap_idx_tensor = cap_len_tensor = None
   scaffold = None
@@ -246,11 +343,12 @@ def main():
     dataset=parsed_args.dataset,
     eval_steps=parsed_args.eval_steps,
     hard_attention=parsed_args.hard_attention,
-    use_sampler=parsed_args.use_sampler
+    use_sampler=parsed_args.use_sampler,
+    bin_size=14
   )
 
   learn_runner.run(
-    experiment_fn=experiment_fn,
+    experiment_fn=experiment_fn_inner,
     run_config=run_config,
     schedule="continuous_train_and_eval",
     hparams=params

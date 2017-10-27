@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import sys
 
 import numpy as np
 import tensorflow as tf
@@ -64,7 +65,7 @@ def main(mode):
   init_fn = assign_from_checkpoint_fn("data/model/inception_v4.ckpt", variables_to_restore)
   init_fn(sess)
 
-  tfrecord_filename = 'data/challenger.ai/tfrecords/feat_14x14x1536_inception_v4.tfrecords'
+  tfrecord_filename = 'data/challenger.ai/tfrecords/%s_feat_14x14x1536_inception_v4.tfrecords' % mode
   writer = tf.python_io.TFRecordWriter(tfrecord_filename)
 
   i = 0
@@ -96,4 +97,7 @@ def main(mode):
 
 
 if __name__ == '__main__':
-  main("train")
+  if len(sys.argv) == 1:
+    main("train")
+  else:
+    main(sys.argv[1])
