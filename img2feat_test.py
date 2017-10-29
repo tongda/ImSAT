@@ -1,12 +1,13 @@
 import tensorflow as tf
-
+import glob
 from imsat.data import ChallengerAI
 
 bin_size = 14
 
 
 def plain_test():
-  ds = tf.data.TFRecordDataset("data/challenger.ai/tfrecords/train_feat_14x14x1536_inception_v4.tfrecords")
+  filelist = glob.glob("data/challenger.ai/tfrecords/val_feat_14x14x1536_inception_v4-*.tfrecords")
+  ds = tf.data.TFRecordDataset(filelist)
 
   def parse(exp):
     features = tf.parse_single_example(
@@ -41,9 +42,11 @@ def test():
   it = tf.data.Dataset.zip((feats_ds, caps_ds)).make_one_shot_iterator()
   feats_ts, caps_ts = it.get_next()
   sess = tf.Session()
-  feats, caps = sess.run([feats_ts, caps_ts])
-  print(feats)
-  print(caps)
+  i = 0
+  while True:
+    i += 1
+    feats, caps = sess.run([feats_ts, caps_ts])
+    print(caps)
 
 
 if __name__ == '__main__':

@@ -65,8 +65,8 @@ def main(mode):
   init_fn = assign_from_checkpoint_fn("data/model/inception_v4.ckpt", variables_to_restore)
   init_fn(sess)
 
-  tfrecord_filename = 'data/challenger.ai/tfrecords/%s_feat_14x14x1536_inception_v4.tfrecords' % mode
-  writer = tf.python_io.TFRecordWriter(tfrecord_filename)
+  tfrecord_filename_base = 'data/challenger.ai/tfrecords/%s_feat_14x14x1536_inception_v4' % mode
+  writer = tf.python_io.TFRecordWriter(tfrecord_filename_base + "-0.tfrecords")
 
   i = 0
   while True:
@@ -76,8 +76,8 @@ def main(mode):
         feature={
           'img_id': tf.train.Feature(
             bytes_list=tf.train.BytesList(value=[feature_dict['img_id']])),
-          'raw_img': tf.train.Feature(
-            bytes_list=tf.train.BytesList(value=[feature_dict['raw_img'].tostring()])),
+          # 'raw_img': tf.train.Feature(
+          #   bytes_list=tf.train.BytesList(value=[feature_dict['raw_img'].tostring()])),
           'img_feats': tf.train.Feature(
             bytes_list=tf.train.BytesList(value=[feats.tostring()])),
           'raw_caps': tf.train.Feature(
@@ -89,6 +89,9 @@ def main(mode):
       writer.write(example.SerializeToString())
       print(i)
       i += 1
+      if i % 10 == 0:
+        writer.close()
+        writer = tf.python_io.TFRecordWriter(tfrecord_filename_base + "-%d.tfrecords" % i)
     except OutOfRangeError as e:
       print(e)
       break
