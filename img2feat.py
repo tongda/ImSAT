@@ -89,7 +89,7 @@ def main(mode):
       writer.write(example.SerializeToString())
       print(i)
       i += 1
-      if i % 10 == 0:
+      if i % 10000 == 0:
         writer.close()
         writer = tf.python_io.TFRecordWriter(tfrecord_filename_base + "-%d.tfrecords" % i)
     except OutOfRangeError as e:
