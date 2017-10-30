@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import pickle
@@ -72,11 +73,11 @@ class ChallengerAI:
       self.word_to_idx = pickle.load(f)
 
   def get_tfrecords_input_fn(self, mode, bin_size):
-    tfrecords_filename = os.path.join(self.data_dir,
-                                      "tfrecords/%s_feat_14x14x1536_inception_v4.tfrecords" % mode)
+    tfrecords_filenames = glob.glob(os.path.join(self.data_dir,
+                                                 "tfrecords/%s_feat_14x14x1536_inception_v4-*.tfrecords" % mode))
 
     def input_fn():
-      ds = tf.data.TFRecordDataset(tfrecords_filename)
+      ds = tf.data.TFRecordDataset(tfrecords_filenames)
 
       def parse_feats(exp):
         features = tf.parse_single_example(
@@ -84,7 +85,7 @@ class ChallengerAI:
           # Defaults are not specified since both keys are required.
           features={
             'img_id': tf.FixedLenFeature([], tf.string),
-            'raw_img': tf.FixedLenFeature([], tf.string),
+            # 'raw_img': tf.FixedLenFeature([], tf.string),
             'img_feats': tf.FixedLenFeature([], tf.string),
             'raw_caps': tf.FixedLenFeature([5, ], tf.string),
             'cap_idx': tf.FixedLenFeature([5, ], tf.string),
@@ -98,7 +99,7 @@ class ChallengerAI:
           # Defaults are not specified since both keys are required.
           features={
             'img_id': tf.FixedLenFeature([], tf.string),
-            'raw_img': tf.FixedLenFeature([], tf.string),
+            # 'raw_img': tf.FixedLenFeature([], tf.string),
             'img_feats': tf.FixedLenFeature([], tf.string),
             'raw_caps': tf.FixedLenFeature([5, ], tf.string),
             'cap_idx': tf.FixedLenFeature([5, ], tf.string),
