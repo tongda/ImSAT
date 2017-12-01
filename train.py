@@ -25,7 +25,7 @@ def model_fn_inner(features, labels, mode, params, config):
     cap_lens = labels.map(lambda t: tf.size(t))
 
     pad_size = ((params.bin_size * params.bin_size, 1536), (None,), ())
-    batches = tf.data.Dataset.zip((features, labels, cap_lens)) \
+    batches = Dataset.zip((features, labels, cap_lens)) \
       .shuffle(buffer_size=200 * params.batch_size) \
       .padded_batch(params.batch_size, pad_size)
 
@@ -46,9 +46,10 @@ def model_fn_inner(features, labels, mode, params, config):
       scaffold = tf.train.Scaffold(init_op=val_iterator.initializer)
 
   if mode == ModeKeys.INFER:
-    batches = features.batch(params.batch_size)
+    # for infer, we need to get image id.
+    batches = features.padded_batch(params.batch_size, ((), (params.bin_size * params.bin_size, 1536)))
     infer_iterator = batches.make_initializable_iterator()
-    feat_tensor = infer_iterator.get_next()
+    image_id, feat_tensor = infer_iterator.get_next()
     tf.add_to_collection("infer_initializer", infer_iterator.initializer)
 
   loss_op = None
@@ -75,13 +76,22 @@ def model_fn_inner(features, labels, mode, params, config):
     outputs = model.build_infer(feat_tensor)
     predictions = tf.argmax(outputs, axis=-1)
 
-  return EstimatorSpec(
-    mode=mode,
-    predictions=predictions,
-    loss=loss_op,
-    train_op=train_op,
-    scaffold=scaffold
-  )
+  if mode != ModeKeys.INFER:
+    return EstimatorSpec(
+      mode=mode,
+      predictions=predictions,
+      loss=loss_op,
+      train_op=train_op,
+      scaffold=scaffold
+    )
+  else:
+    return EstimatorSpec(
+      mode=mode,
+      predictions={"image_id": image_id, "predictions": predictions},
+      loss=loss_op,
+      train_op=train_op,
+      scaffold=scaffold
+    )
 
 
 def experiment_fn_inner(run_config, hparams):

@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import pickle
@@ -6,6 +7,7 @@ import sys
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib import slim
+from tensorflow.contrib.data import Dataset
 from tensorflow.contrib.framework import assign_from_checkpoint_fn
 from tensorflow.python.framework.errors_impl import OutOfRangeError
 
@@ -50,7 +52,7 @@ def main(mode):
     }
     # return img_id, image, caps, splitted_caps
 
-  it = tf.data.Dataset.from_tensor_slices((image_ids, caps)).map(parse).make_one_shot_iterator()
+  it = Dataset.from_tensor_slices((image_ids, caps)).map(parse).make_one_shot_iterator()
   feat_tensor_dict = it.get_next()
 
   arg_scope = inception_v4_arg_scope()
@@ -99,8 +101,73 @@ def main(mode):
   writer.close()
 
 
+def transform_test_dataset():
+  data_dir = "data/challenger.ai"
+  bin_size = 14
+
+  filenames = [fn.split('/')[-1] for fn in glob.glob(os.path.join(data_dir, "image/test/*"))]
+
+  def parse(img_id):
+    filename = os.path.join(data_dir, "image/test/") + img_id
+    image = tf.image.decode_jpeg(tf.read_file(filename), channels=3)
+    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+    image = tf.subtract(image, 0.5)
+    image = tf.multiply(image, 2.0)
+
+    return {
+      'img_id': img_id,
+      'raw_img': image,
+    }
+
+  it = Dataset.from_tensor_slices(filenames).map(parse).make_one_shot_iterator()
+  feat_tensor_dict = it.get_next()
+
+  arg_scope = inception_v4_arg_scope()
+  with slim.arg_scope(arg_scope):
+    final_conv_layer, end_points = inception_v4_base(tf.expand_dims(feat_tensor_dict['raw_img'], 0))
+  feats_tensor = spatial_pyramid_pooling(final_conv_layer, [bin_size], mode='avg')
+  feats_tensor = tf.reshape(feats_tensor, shape=(-1, bin_size * bin_size, 1536))
+
+  sess = tf.Session()
+
+  variables_to_restore = slim.get_variables_to_restore(exclude=['global_step'])
+  init_fn = assign_from_checkpoint_fn("data/model/inception_v4.ckpt", variables_to_restore)
+  init_fn(sess)
+
+  tfrecord_filename_base = 'data/challenger.ai/tfrecords/test_feat_14x14x1536_inception_v4'
+  writer = tf.python_io.TFRecordWriter(tfrecord_filename_base + "-0.tfrecords")
+
+  i = 0
+  while True:
+    try:
+      feature_dict, feats = sess.run((feat_tensor_dict, feats_tensor))
+      example = tf.train.Example(features=tf.train.Features(
+        feature={
+          'img_id': tf.train.Feature(
+            bytes_list=tf.train.BytesList(value=[feature_dict['img_id']])),
+          # 'raw_img': tf.train.Feature(
+          #   bytes_list=tf.train.BytesList(value=[feature_dict['raw_img'].tostring()])),
+          'img_feats': tf.train.Feature(
+            bytes_list=tf.train.BytesList(value=[feats.tostring()])),
+        })
+      )
+      writer.write(example.SerializeToString())
+      print(i)
+      i += 1
+      if i % 10000 == 0:
+        writer.close()
+        writer = tf.python_io.TFRecordWriter(tfrecord_filename_base + "-%d.tfrecords" % i)
+    except OutOfRangeError as e:
+      print(e)
+      break
+
+  writer.close()
+
+
 if __name__ == '__main__':
   if len(sys.argv) == 1:
     main("train")
+  elif sys.argv[1] == "test":
+    transform_test_dataset()
   else:
     main(sys.argv[1])

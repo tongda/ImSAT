@@ -10,15 +10,15 @@ from tensorflow.contrib.learn import RunConfig
 from tensorflow.contrib.training import HParams
 from tensorflow.python.estimator.estimator import Estimator
 
-from imsat.data import get_decode_image_fn
+from imsat.data import get_decode_image_fn, ChallengerAI
 from imsat.hook import IteratorInitializerHook
-from train import model_fn
+from train import model_fn_inner
 
 
 def get_parser():
   parser = argparse.ArgumentParser(description="ImSAT predictor.")
   parser.add_argument("--model-dir", dest="model_dir", type=str,
-                      default="ckp-dir/dataset_challenger.ai-selector_True-dropout_True-ctx2out_True-prev2out_True-lr_0.001",
+                      default="ckp-dir/dataset_challenger.ai-hard_attention_True-selector_True-dropout_True-ctx2out_True-prev2out_True-lr_0.001",
                       help="Path of checkpoint.")
   parser.add_argument("--batch-size", dest="batch_size", type=int, default=2,
                       help="Batch size.")
@@ -58,25 +58,31 @@ def main():
                     dropout=parsed_args.dropout,
                     ctx2out=parsed_args.ctx2out,
                     prev2out=parsed_args.prev2out,
-                    hard_attention=parsed_args.hard_attention)
+                    hard_attention=parsed_args.hard_attention,
+                    bin_size=14)
   run_config = RunConfig(model_dir=parsed_args.model_dir)
   estimator = Estimator(
-    model_fn=model_fn,
+    model_fn=model_fn_inner,
     params=hparams,
     config=run_config)
 
-  image_ids, input_fn = get_input_fn()
+  dataset = ChallengerAI("data/challenger.ai")
+
+  input_fn = dataset.get_tfrecords_test_input_fn(bin_size=hparams.bin_size)
   val_init_hook = IteratorInitializerHook("infer")
 
   idx_to_word = {v: k for k, v in word_to_idx.items()}
   del word_to_idx
 
-  pred_results = estimator.predict(input_fn, hooks=[val_init_hook])
+  results = estimator.predict(input_fn, hooks=[val_init_hook])
   all_predicions = []
+  image_ids = []
   num_generated = 0
-  for pred in pred_results:
+  for batch_result in results:
+    image_id, pred = batch_result["image_id"], batch_result["predictions"]
     result = ''.join([idx_to_word[idx] for idx in pred if idx != 0 and idx != 2])
     all_predicions.append(result)
+    image_ids.append(image_id.decode("utf-8").split(".")[0])
     num_generated = num_generated + 1
     if num_generated % 1000 == 0:
       print("Generated %d" % num_generated)

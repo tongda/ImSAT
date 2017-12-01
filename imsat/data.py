@@ -6,7 +6,7 @@ import random
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.data import Dataset
+from tensorflow.contrib.data import Dataset, TFRecordDataset
 from tensorflow.python.ops.lookup_ops import KeyValueTensorInitializer, HashTable
 
 
@@ -72,24 +72,50 @@ class ChallengerAI:
     with open(os.path.join(data_dir, 'word_to_idx.pkl'), 'rb') as f:
       self.word_to_idx = pickle.load(f)
 
+  def get_tfrecords_test_input_fn(self, bin_size):
+    tfrecords_filenames = glob.glob(os.path.join(self.data_dir,
+                                                 "tfrecords/test_feat_14x14x1536_inception_v4-*.tfrecords"))
+
+    def input_fn():
+      ds = TFRecordDataset(tfrecords_filenames)
+
+      def parse_feats(exp):
+        feature_def_dict = {
+          'img_id': tf.FixedLenFeature([], tf.string),
+          'img_feats': tf.FixedLenFeature([], tf.string),
+        }
+
+        features = tf.parse_single_example(
+          exp,
+          # Defaults are not specified since both keys are required.
+          features=feature_def_dict)
+        feats_tensor = tf.reshape(tf.decode_raw(features['img_feats'], tf.float32), [bin_size * bin_size, 1536])
+        return features['img_id'], feats_tensor
+
+      return ds.map(parse_feats)
+
+    return input_fn
+
   def get_tfrecords_input_fn(self, mode, bin_size):
     tfrecords_filenames = glob.glob(os.path.join(self.data_dir,
                                                  "tfrecords/%s_feat_14x14x1536_inception_v4-*.tfrecords" % mode))
 
     def input_fn():
-      ds = tf.data.TFRecordDataset(tfrecords_filenames)
+      ds = TFRecordDataset(tfrecords_filenames)
 
       def parse_feats(exp):
+        feature_def_dict = {
+          'img_id': tf.FixedLenFeature([], tf.string),
+          # 'raw_img': tf.FixedLenFeature([], tf.string),
+          'img_feats': tf.FixedLenFeature([], tf.string),
+          'raw_caps': tf.FixedLenFeature([5, ], tf.string),
+          'cap_idx': tf.FixedLenFeature([5, ], tf.string),
+        }
+
         features = tf.parse_single_example(
           exp,
           # Defaults are not specified since both keys are required.
-          features={
-            'img_id': tf.FixedLenFeature([], tf.string),
-            # 'raw_img': tf.FixedLenFeature([], tf.string),
-            'img_feats': tf.FixedLenFeature([], tf.string),
-            'raw_caps': tf.FixedLenFeature([5, ], tf.string),
-            'cap_idx': tf.FixedLenFeature([5, ], tf.string),
-          })
+          features=feature_def_dict)
         feats_tensor = tf.reshape(tf.decode_raw(features['img_feats'], tf.float32), [bin_size * bin_size, 1536])
         return feats_tensor
 
@@ -108,7 +134,6 @@ class ChallengerAI:
         cap_tensor = tf.decode_raw(random.choice(tf.unstack(features['cap_idx'])), tf.int32)
 
         return cap_tensor
-
       return ds.map(parse_feats), ds.map(parse_caps)
 
     return input_fn
